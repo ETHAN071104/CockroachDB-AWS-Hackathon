@@ -67,6 +67,22 @@ from study.reporting import (
 from study.summarizer import (
     generate_session_summary,
 )
+from study.recommendations import (
+    build_review_queue,
+    format_review_queue,
+)
+from study.reviewer import (
+    format_review_action,
+    generate_review_action,
+)
+from study.quiz_generator import (
+    format_grounded_quiz,
+    generate_grounded_quiz,
+)
+from study.quiz_runner import (
+    format_quiz_run_result,
+    run_quiz_interactively,
+)
 
 def save_candidate_memory(
     candidate: MemoryCandidate,
@@ -974,6 +990,327 @@ def study_reports_interface() -> None:
                 "Enter a number from 1 to 5."
             )
 
+def view_review_queue_interface() -> None:
+    """
+    Display unresolved partial and confused questions.
+    """
+    print("\nVIEW REVIEW QUEUE")
+
+    raw_limit = input(
+        "Maximum review items [default 10]: "
+    ).strip()
+
+    max_items = 10
+
+    if raw_limit:
+        try:
+            max_items = int(raw_limit)
+        except ValueError:
+            print("Maximum items must be a number.")
+            return
+
+        if max_items <= 0:
+            print(
+                "Maximum items must be greater than zero."
+            )
+            return
+
+    try:
+        queue = build_review_queue(
+            max_items=max_items
+        )
+
+        print()
+        print(format_review_queue(queue))
+
+    except Exception as error:
+        print(
+            f"\nCould not build review queue: {error}"
+        )
+
+def select_review_recommendation():
+    """
+    Display the current review queue and let the learner
+    select one recommendation.
+
+    Returns None when the queue is empty or selection is
+    cancelled.
+    """
+    try:
+        queue = build_review_queue(
+            max_items=20
+        )
+    except Exception as error:
+        print(
+            f"\nCould not build review queue: {error}"
+        )
+        return None
+
+    if not queue.recommendations:
+        print(
+            "\nNo unresolved partial or confused "
+            "questions were found."
+        )
+        return None
+
+    print("\nAvailable review items:")
+
+    for position, recommendation in enumerate(
+        queue.recommendations,
+        start=1,
+    ):
+        print(
+            f"{position}. "
+            f"[{recommendation.outcome}] "
+            f"{recommendation.question}"
+        )
+        print(
+            "   Priority: "
+            f"{recommendation.priority_score}"
+        )
+
+    raw_choice = input(
+        "\nSelect item number or /back: "
+    ).strip()
+
+    if raw_choice.lower() == "/back":
+        return None
+
+    try:
+        selected_position = int(raw_choice)
+    except ValueError:
+        print("Selection must be a number.")
+        return None
+
+    if not (
+        1
+        <= selected_position
+        <= len(queue.recommendations)
+    ):
+        print(
+            "Selected review item does not exist."
+        )
+        return None
+
+    return queue.recommendations[
+        selected_position - 1
+    ]
+
+def generate_review_activity_interface() -> None:
+    """
+    Generate a grounded review activity for one unresolved
+    question.
+    """
+    print("\nGENERATE REVIEW ACTIVITY")
+
+    recommendation = (
+        select_review_recommendation()
+    )
+
+    if recommendation is None:
+        return
+
+    try:
+        print(
+            "\nRetrieving sources and generating "
+            "review activity..."
+        )
+
+        result = generate_review_action(
+            recommendation
+        )
+
+        print()
+        print(format_review_action(result))
+
+    except Exception as error:
+        print(
+            "\nCould not generate review activity: "
+            f"{error}"
+        )
+
+def take_grounded_quiz_interface() -> None:
+    """
+    Generate and run a grounded multiple-choice quiz.
+
+    Quiz attempts are not stored during Milestone 6B.
+    """
+    print("\nTAKE GROUNDED QUIZ")
+
+    try:
+        topic = input(
+            "Quiz topic or /back: "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+
+    if topic.lower() == "/back":
+        return
+
+    if not topic:
+        print("Quiz topic cannot be empty.")
+        return
+
+    try:
+        raw_count = input(
+            "Number of questions [default 3]: "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+
+    if raw_count.lower() == "/back":
+        return
+
+    question_count = 3
+
+    if raw_count:
+        try:
+            question_count = int(raw_count)
+        except ValueError:
+            print(
+                "Question count must be a number."
+            )
+            return
+
+    if not 1 <= question_count <= 10:
+        print(
+            "Question count must be between 1 and 10."
+        )
+        return
+
+    try:
+        print(
+            "\nRetrieving documents and generating quiz..."
+        )
+
+        generated_quiz = generate_grounded_quiz(
+            topic=topic,
+            question_count=question_count,
+        )
+
+    except Exception as error:
+        print(
+            f"\nCould not generate quiz: {error}"
+        )
+        return
+
+    if not generated_quiz.quiz.should_generate:
+        print()
+        print(
+            format_grounded_quiz(
+                generated_quiz
+            )
+        )
+        return
+
+    print(
+        "\nQuiz generated successfully."
+    )
+    print(
+        f"Topic: {generated_quiz.quiz.topic}"
+    )
+    print(
+        "Questions: "
+        f"{len(generated_quiz.quiz.questions)}"
+    )
+    print(
+        "Confidence: "
+        f"{generated_quiz.quiz.confidence:.2f}"
+    )
+
+    try:
+        result = run_quiz_interactively(
+            generated_quiz
+        )
+    except Exception as error:
+        print(
+            f"\nCould not run quiz: {error}"
+        )
+        return
+
+    print()
+    print(
+        format_quiz_run_result(
+            result
+        )
+    )
+
+def study_actions_interface() -> None:
+    """
+    Adaptive study tools submenu.
+    """
+    while True:
+        print("\nSTUDY ACTIONS")
+        print("1. View review queue")
+        print("2. Generate grounded review activity")
+        print("3. Take grounded quiz")
+        print("4. Back")
+
+        try:
+            choice = input(
+                "\nSelection: "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+
+        if choice == "1":
+            view_review_queue_interface()
+
+        elif choice == "2":
+            generate_review_activity_interface()
+
+        elif choice == "3":
+            take_grounded_quiz_interface()
+
+        elif choice == "4":
+            return
+
+        else:
+            print(
+                "Invalid selection. "
+                "Enter a number from 1 to 4."
+            )
+
+def study_actions_interface() -> None:
+    """
+    Adaptive study tools submenu.
+    """
+    while True:
+        print("\nSTUDY ACTIONS")
+        print("1. View review queue")
+        print("2. Generate grounded review activity")
+        print("3. Take grounded quiz")
+        print("4. Back")
+
+        try:
+            choice = input(
+                "\nSelection: "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+
+        if choice == "1":
+            view_review_queue_interface()
+
+        elif choice == "2":
+            generate_review_activity_interface()
+
+        elif choice == "3":
+            take_grounded_quiz_interface()
+
+        elif choice == "4":
+            return
+
+        else:
+            print(
+                "Invalid selection. "
+                "Enter a number from 1 to 4."
+            )
+
 def print_header() -> None:
     print("\n" + "=" * 60)
     print("LOCAL STUDY COMPANION RAG")
@@ -994,7 +1331,8 @@ def print_menu() -> None:
     print("10. Delete learner memory")
     print("11. Consolidate learner memories")
     print("12. Study reports")
-    print("13. Quit")
+    print("13. Study actions")
+    print("14. Quit")
 
 
 def add_file_interface() -> None:
@@ -1440,11 +1778,17 @@ def main() -> None:
             consolidate_memories_interface()
         elif choice == "12":
             study_reports_interface()
+
         elif choice == "13":
+            study_actions_interface()
+
+        elif choice == "14":
             quit_program()
+
         else:
             print(
-                "Invalid selection. Enter a number from 1 to 13."
+                "Invalid selection. "
+                "Enter a number from 1 to 14."
             )
     
 
