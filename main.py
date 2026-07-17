@@ -1,6 +1,7 @@
 from __future__ import annotations
 from memory.database import initialize_memory_database
 import sys
+from study.database import initialize_study_database
 from pathlib import Path
 from memory.extractor import propose_memory_candidate
 from memory.validator import validate_memory_candidate
@@ -43,6 +44,14 @@ from memory.service import (
     replace_memory_with_candidate,
     search_memories,
     update_memory,
+)
+
+from study.database import (
+    StudySourceInput,
+    end_study_session,
+    get_or_create_active_study_session,
+    initialize_study_database,
+    insert_study_interaction_with_sources,
 )
 
 
@@ -757,6 +766,35 @@ def print_sources(sources: list[RetrievedSource]) -> None:
         print("-" * 60)
         print(source.text)
 
+def complete_chat_study_session(
+    session_id: int,
+) -> None:
+    """
+    Complete the study session used by the current chat mode.
+    """
+    try:
+        completed_session = end_study_session(
+            session_id
+        )
+
+        print(
+            "\nStudy session completed."
+        )
+        print(
+            f"Session ID: {completed_session.id}"
+        )
+        print(
+            f"Started: {completed_session.started_at}"
+        )
+        print(
+            f"Ended: {completed_session.ended_at}"
+        )
+
+    except Exception as error:
+        print(
+            "\nWarning: the study session could not be "
+            f"completed: {error}"
+        )
 
 def chat_interface() -> None:
     documents = list_documents()
@@ -766,19 +804,44 @@ def chat_interface() -> None:
         print("Use option 1 to add a file first.")
         return
 
+    # ========================================================
+    # CREATE OR RESUME STUDY SESSION
+    # ========================================================
+
+    try:
+        study_session = (
+            get_or_create_active_study_session()
+        )
+
+    except Exception as error:
+        print(
+            "\nChat could not start because a study session "
+            f"could not be created: {error}"
+        )
+        return
+
     print("\nCHAT MODE")
+    print(f"Study session ID: {study_session.id}")
     print("Each question is independent.")
     print("Commands:")
     print("  /sources  Show sources from the latest answer")
-    print("  /back     Return to the main menu")
+    print("  /back     Complete this session and return")
 
     latest_sources: list[RetrievedSource] = []
 
     while True:
         try:
-            question = input("\nYou: ").strip()
+            question = input(
+                "\nYou: "
+            ).strip()
+
         except (EOFError, KeyboardInterrupt):
             print()
+
+            complete_chat_study_session(
+                study_session.id
+            )
+
             return
 
         if not question:
@@ -787,20 +850,29 @@ def chat_interface() -> None:
         command = question.lower()
 
         if command == "/back":
+            complete_chat_study_session(
+                study_session.id
+            )
+
             return
 
         if command == "/sources":
-            print_sources(latest_sources)
+            print_sources(
+                latest_sources
+            )
+
             continue
 
         try:
-            answer, latest_sources = answer_question(question)
+            answer, latest_sources = answer_question(
+                question
+            )
 
             print("\nAssistant:")
             print(answer)
 
             if latest_sources:
-                source_labels = []
+                source_labels: list[str] = []
 
                 for source in latest_sources:
                     if source.page_number is not None:
@@ -809,6 +881,7 @@ def chat_interface() -> None:
                             f"{source.filename}, "
                             f"page {source.page_number}"
                         )
+
                     else:
                         source_labels.append(
                             f"[{source.index}] "
@@ -816,18 +889,72 @@ def chat_interface() -> None:
                         )
 
                 print("\nSources retrieved:")
+
                 for label in source_labels:
                     print(f"- {label}")
+
+            # =================================================
+            # SAVE STUDY HISTORY
+            # =================================================
+
+            study_source_inputs = [
+                StudySourceInput(
+                    source_index=source.index,
+                    filename=source.filename,
+                    page_number=source.page_number,
+                    chunk_index=source.chunk_index,
+                    distance=source.distance,
+                )
+                for source in latest_sources
+            ]
+
+            try:
+                interaction, stored_sources = (
+                    insert_study_interaction_with_sources(
+                        session_id=study_session.id,
+                        question=question,
+                        answer=answer,
+                        sources=study_source_inputs,
+                        outcome="unrated",
+                    )
+                )
+
+                print(
+                    "\nStudy history saved."
+                )
+                print(
+                    f"Interaction ID: {interaction.id}"
+                )
+                print(
+                    "Sources recorded: "
+                    f"{len(stored_sources)}"
+                )
+
+            except Exception as history_error:
+                # The generated answer remains useful even when
+                # local history storage fails.
+                print(
+                    "\nWarning: the answer was generated, but "
+                    "study history could not be saved: "
+                    f"{history_error}"
+                )
+
+            # Memory extraction is separate from study history.
             handle_memory_proposal(
                 user_message=question,
                 assistant_answer=answer,
             )
 
         except Exception as error:
-            print(f"\nQuestion failed: {error}")
-
+            # Failed questions are not added to study history.
+            print(
+                f"\nQuestion failed: {error}"
+            )
 
 def list_files_interface() -> None:
+    """
+    Display all files currently indexed in the local RAG system.
+    """
     documents = list_documents()
 
     print("\nINDEXED FILES")
@@ -843,7 +970,6 @@ def list_files_interface() -> None:
         print(f"Type: {document.mime_type}")
         print(f"Chunks: {document.chunk_count}")
         print(f"Added: {document.created_at}")
-
 
 def delete_file_interface() -> None:
     documents = list_documents()
@@ -904,6 +1030,9 @@ def delete_file_interface() -> None:
 def main() -> None:
     initialize_memory_database()
     initialize_database()
+    initialize_study_database()
+    initialize_study_database()
+
     print_header()
 
     while True:
