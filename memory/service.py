@@ -23,6 +23,10 @@ from rag.config import (
     MEMORY_RETRIEVAL_K,
 )
 
+@dataclass(frozen=True)
+class MemoryReplacementResult:
+    archived_memory: StoredMemory
+    new_memory: StoredMemory
 
 @dataclass(frozen=True)
 class MemorySearchResult:
@@ -230,27 +234,153 @@ def update_memory(
 def archive_memory(memory_id: int) -> bool:
     """
     Mark a memory as archived and remove it from semantic search.
+
+    The vector is removed first. If the SQLite update fails,
+    the vector is restored so both stores remain consistent.
     """
     existing_memory = get_memory(memory_id)
 
     if existing_memory is None:
         return False
 
-    archived = archive_memory_record(memory_id)
+    if existing_memory.status == "archived":
+        return True
 
-    if not archived:
-        return False
+    vector_store = get_memory_vector_store()
+    vector_id = make_memory_vector_id(memory_id)
 
+    # Remove the active vector first.
     try:
-        delete_memory_vector(memory_id)
+        vector_store.delete(
+            ids=[vector_id],
+        )
+
     except Exception as error:
         raise RuntimeError(
-            "Memory was archived in SQLite, but its vector "
-            f"could not be removed: {error}"
+            "The memory vector could not be removed, so the "
+            f"SQLite record was not archived: {error}"
         ) from error
+
+    # Archive the SQLite record.
+    try:
+        archived = archive_memory_record(memory_id)
+
+    except Exception as error:
+        try:
+            vector_store.add_documents(
+                documents=[
+                    memory_to_document(existing_memory)
+                ],
+                ids=[vector_id],
+            )
+
+        except Exception as restore_error:
+            raise RuntimeError(
+                "SQLite archiving failed and the original "
+                "memory vector could not be restored. "
+                f"Archive error: {error}. "
+                f"Restore error: {restore_error}"
+            ) from error
+
+        raise RuntimeError(
+            "SQLite archiving failed. The original vector "
+            "was restored."
+        ) from error
+
+    if not archived:
+        try:
+            vector_store.add_documents(
+                documents=[
+                    memory_to_document(existing_memory)
+                ],
+                ids=[vector_id],
+            )
+
+        except Exception as restore_error:
+            raise RuntimeError(
+                "The memory record was not archived and its "
+                f"vector could not be restored: {restore_error}"
+            ) from restore_error
+
+        return False
 
     return True
 
+def replace_memory_with_candidate(
+    existing_memory_id: int,
+    memory_type: str,
+    content: str,
+    confidence: float,
+    importance: float,
+) -> MemoryReplacementResult:
+    """
+    Save a new active memory and archive the existing memory.
+
+    The old record remains in SQLite as history, but its vector
+    is removed from active semantic retrieval.
+    """
+    existing_memory = get_memory(
+        existing_memory_id
+    )
+
+    if existing_memory is None:
+        raise ValueError(
+            f"Memory ID {existing_memory_id} does not exist."
+        )
+
+    if existing_memory.status != "active":
+        raise ValueError(
+            f"Memory ID {existing_memory_id} is not active."
+        )
+
+    if existing_memory.memory_type != memory_type:
+        raise ValueError(
+            "The replacement memory must have the same type "
+            "as the existing memory."
+        )
+
+    # Save the new memory first. If this fails, the existing
+    # memory remains untouched.
+    new_memory = add_memory(
+        memory_type=memory_type,
+        content=content,
+        confidence=confidence,
+        importance=importance,
+    )
+
+    try:
+        archived = archive_memory(
+            existing_memory_id
+        )
+
+        if not archived:
+            raise RuntimeError(
+                "The existing memory could not be archived."
+            )
+
+    except Exception as archive_error:
+        # Remove the newly created memory if replacement fails.
+        try:
+            delete_memory(new_memory.id)
+
+        except Exception as cleanup_error:
+            raise RuntimeError(
+                "Replacement failed and cleanup of the new "
+                f"memory also failed. New memory ID: "
+                f"{new_memory.id}. Archive error: "
+                f"{archive_error}. Cleanup error: "
+                f"{cleanup_error}"
+            ) from archive_error
+
+        raise RuntimeError(
+            "Replacement failed. The newly created memory was "
+            "removed and the existing memory was retained."
+        ) from archive_error
+
+    return MemoryReplacementResult(
+        archived_memory=existing_memory,
+        new_memory=new_memory,
+    )
 
 def delete_memory(memory_id: int) -> bool:
     """

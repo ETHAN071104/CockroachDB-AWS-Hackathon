@@ -74,3 +74,50 @@ class MemoryCandidate(BaseModel):
             "should not be stored."
         ),
     )
+
+
+MemoryRelationshipType = Literal[
+    "duplicate",
+    "new",
+    "refinement",
+    "contradiction",
+]
+
+class MemoryRelationshipAssessment(BaseModel):
+    """
+    LLM assessment of the relationship between a proposed
+    memory and one existing active memory.
+
+    Duplicate detection is handled deterministically before
+    this model is called, so the LLM only chooses between:
+    new, refinement and contradiction.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    relationship_type: MemoryRelationshipType = Field(
+        description=(
+            "How the proposed memory relates to the existing "
+            "memory: new, refinement, or contradiction."
+        )
+    )
+
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Confidence in the relationship classification."
+        ),
+    )
+
+    reason: str = Field(
+        min_length=1,
+        max_length=500,
+        description=(
+            "A concise explanation grounded only in the two "
+            "memory statements."
+        ),
+    )

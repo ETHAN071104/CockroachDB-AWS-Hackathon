@@ -9,13 +9,12 @@ from memory.service import (
     MemorySearchResult,
     search_memories,
 )
-from rag.config import MEMORY_DUPLICATE_MAX_DISTANCE
 
 
 @dataclass(frozen=True)
 class DuplicateMemoryResult:
     """
-    Result of comparing a proposed memory against existing
+    Result of checking a proposed memory against existing
     active learner memories.
     """
 
@@ -26,7 +25,7 @@ class DuplicateMemoryResult:
 
 def normalize_memory_text(text: str) -> str:
     """
-    Normalize text for exact duplicate comparison.
+    Normalize text for deterministic exact comparison.
 
     Examples that become equivalent:
 
@@ -63,16 +62,19 @@ def find_duplicate_memory(
     search_count: int = 5,
 ) -> DuplicateMemoryResult:
     """
-    Check whether a proposed memory duplicates an existing
-    active memory.
+    Check for normalized exact duplicates.
 
-    Duplicate detection has two levels:
+    Semantic similarity is used only to locate the closest
+    same-type memory. It does not decide whether the candidate
+    is a duplicate.
 
-    1. Normalized exact-text comparison.
-    2. Semantic-distance comparison.
+    Non-exact matches are passed to the relationship classifier,
+    which decides between:
 
-    Only memories with the same memory type are considered
-    duplicates in Milestone 4A.
+    - duplicate
+    - new
+    - refinement
+    - contradiction
     """
 
     if not candidate.should_store:
@@ -103,7 +105,6 @@ def find_duplicate_memory(
         k=search_count,
     )
 
-    # In Milestone 4A, only compare memories of the same type.
     same_type_results = [
         result
         for result in results
@@ -123,7 +124,7 @@ def find_duplicate_memory(
         candidate_content
     )
 
-    # First check normalized exact matches.
+    # Only normalized exact matches are blocked here.
     for result in same_type_results:
         normalized_existing = normalize_memory_text(
             result.content
@@ -139,30 +140,19 @@ def find_duplicate_memory(
                 ),
             )
 
-    # Then check the closest semantic match.
+    # Find the nearest related memory, but do not declare it
+    # a duplicate based only on vector distance.
     closest_result = min(
         same_type_results,
         key=lambda item: item.distance,
     )
 
-    if (
-        closest_result.distance
-        <= MEMORY_DUPLICATE_MAX_DISTANCE
-    ):
-        return DuplicateMemoryResult(
-            is_duplicate=True,
-            existing_memory=closest_result,
-            reason=(
-                "The proposed memory is semantically very close "
-                "to an existing active memory."
-            ),
-        )
-
     return DuplicateMemoryResult(
         is_duplicate=False,
         existing_memory=closest_result,
         reason=(
-            "The closest same-type memory is outside the "
-            "duplicate-distance threshold."
+            "No normalized exact duplicate was found. "
+            "The closest same-type memory will be passed to "
+            "relationship classification."
         ),
     )

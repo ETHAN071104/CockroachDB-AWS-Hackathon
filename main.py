@@ -5,9 +5,10 @@ from pathlib import Path
 from memory.extractor import propose_memory_candidate
 from memory.validator import validate_memory_candidate
 from rag.config import ENABLE_MEMORY_PROPOSALS
-from memory.duplicate_detector import (
-    find_duplicate_memory,
+from memory.conflict_detector import (
+    detect_memory_conflict,
 )
+from memory.models import MemoryCandidate
 
 from rag.database import (
     delete_document_record,
@@ -27,24 +28,82 @@ from memory.service import (
     archive_memory,
     delete_memory,
     get_all_memories,
+    replace_memory_with_candidate,
     search_memories,
     update_memory,
 )
+
+
+def save_candidate_memory(
+    candidate: MemoryCandidate,
+) -> None:
+    """
+    Save one confirmed memory candidate.
+    """
+    try:
+        saved_memory = add_memory(
+            memory_type=candidate.memory_type,
+            content=candidate.content,
+            confidence=candidate.confidence,
+            importance=candidate.importance,
+        )
+
+        print(
+            "\nMemory saved successfully with ID "
+            f"{saved_memory.id}."
+        )
+
+    except Exception as error:
+        print(
+            f"\nCould not save proposed memory: {error}"
+        )
+
+
+def replace_existing_with_candidate(
+    existing_memory_id: int,
+    candidate: MemoryCandidate,
+) -> None:
+    """
+    Archive an existing memory and save the candidate as its
+    active replacement.
+    """
+    try:
+        result = replace_memory_with_candidate(
+            existing_memory_id=existing_memory_id,
+            memory_type=candidate.memory_type,
+            content=candidate.content,
+            confidence=candidate.confidence,
+            importance=candidate.importance,
+        )
+
+        print("\nMemory replaced successfully.")
+        print(
+            "Archived memory ID: "
+            f"{result.archived_memory.id}"
+        )
+        print(
+            "New active memory ID: "
+            f"{result.new_memory.id}"
+        )
+
+    except Exception as error:
+        print(
+            f"\nMemory replacement failed: {error}"
+        )
 
 def handle_memory_proposal(
     user_message: str,
     assistant_answer: str,
 ) -> None:
     """
-    Extract, validate, deduplicate and optionally save one
+    Extract, validate, classify and optionally store one
     learner memory.
     """
-
     if not ENABLE_MEMORY_PROPOSALS:
         return
 
     # ========================================================
-    # STEP 1: LLM EXTRACTION
+    # STEP 1: EXTRACT CANDIDATE
     # ========================================================
 
     try:
@@ -61,10 +120,12 @@ def handle_memory_proposal(
         return
 
     # ========================================================
-    # STEP 2: DETERMINISTIC VALIDATION
+    # STEP 2: VALIDATE CANDIDATE
     # ========================================================
 
-    validation = validate_memory_candidate(candidate)
+    validation = validate_memory_candidate(
+        candidate
+    )
 
     if not validation.accepted:
         if candidate.should_store:
@@ -81,37 +142,51 @@ def handle_memory_proposal(
         return
 
     # ========================================================
-    # STEP 3: DUPLICATE DETECTION
+    # STEP 3: CLASSIFY RELATIONSHIP
     # ========================================================
 
     try:
-        duplicate_result = find_duplicate_memory(
+        conflict_result = detect_memory_conflict(
             candidate
         )
 
     except Exception as error:
-        # Duplicate checking failure should not silently save
-        # an unchecked memory.
+        # Never save an unchecked candidate automatically.
         print(
-            "\nMemory proposal skipped because duplicate "
-            f"detection failed: {error}"
+            "\nMemory proposal skipped because relationship "
+            f"classification failed: {error}"
         )
         return
 
-    if duplicate_result.is_duplicate:
-        existing = duplicate_result.existing_memory
+    existing = conflict_result.existing_memory
 
+    # ========================================================
+    # STEP 4: HANDLE DUPLICATE
+    # ========================================================
+
+    if conflict_result.conflict_type == "duplicate":
         print("\n" + "=" * 60)
         print("DUPLICATE MEMORY DETECTED")
         print("=" * 60)
 
         if existing is not None:
-            print(f"Existing memory ID: {existing.memory_id}")
-            print(f"Type: {existing.memory_type}")
-            print(f"Content: {existing.content}")
-            print(f"Distance: {existing.distance:.4f}")
+            print(
+                f"Existing memory ID: "
+                f"{existing.memory_id}"
+            )
+            print(
+                f"Type: {existing.memory_type}"
+            )
+            print(
+                f"Content: {existing.content}"
+            )
+            print(
+                f"Distance: {existing.distance:.4f}"
+            )
 
-        print(f"Reason: {duplicate_result.reason}")
+        print(
+            f"Reason: {conflict_result.reason}"
+        )
         print(
             "\nThe proposed memory was not saved because an "
             "equivalent active memory already exists."
@@ -120,64 +195,134 @@ def handle_memory_proposal(
         return
 
     # ========================================================
-    # STEP 4: DISPLAY CANDIDATE
+    # STEP 5: DISPLAY CANDIDATE
     # ========================================================
 
     print("\n" + "=" * 60)
     print("PROPOSED LEARNER MEMORY")
     print("=" * 60)
-    print(f"Type: {candidate.memory_type}")
-    print(f"Content: {candidate.content}")
-    print(f"Confidence: {candidate.confidence:.2f}")
-    print(f"Importance: {candidate.importance:.2f}")
-    print(f"Reason: {candidate.reason}")
+    print(
+        f"Relationship: "
+        f"{conflict_result.conflict_type}"
+    )
+    print(
+        f"Relationship confidence: "
+        f"{conflict_result.confidence:.2f}"
+    )
+    print(
+        f"Type: {candidate.memory_type}"
+    )
+    print(
+        f"Content: {candidate.content}"
+    )
+    print(
+        f"Candidate confidence: "
+        f"{candidate.confidence:.2f}"
+    )
+    print(
+        f"Importance: {candidate.importance:.2f}"
+    )
+    print(
+        f"Candidate reason: {candidate.reason}"
+    )
+    print(
+        f"Relationship reason: "
+        f"{conflict_result.reason}"
+    )
 
-    if duplicate_result.existing_memory is not None:
-        closest = duplicate_result.existing_memory
-
-        print("\nClosest existing same-type memory:")
-        print(f"ID: {closest.memory_id}")
-        print(f"Content: {closest.content}")
-        print(f"Distance: {closest.distance:.4f}")
+    if existing is not None:
+        print("\nRelated existing memory:")
         print(
-            "This distance is outside the configured duplicate "
-            "threshold, so the candidate is treated as distinct."
+            f"ID: {existing.memory_id}"
+        )
+        print(
+            f"Type: {existing.memory_type}"
+        )
+        print(
+            f"Content: {existing.content}"
+        )
+        print(
+            f"Distance: {existing.distance:.4f}"
         )
 
     # ========================================================
-    # STEP 5: USER CONFIRMATION
+    # STEP 6: HANDLE NEW MEMORY
     # ========================================================
 
-    confirmation = input(
-        "\nSave this memory? [y/N]: "
-    ).strip().lower()
+    if conflict_result.conflict_type == "new":
+        confirmation = input(
+            "\nSave this new memory? [y/N]: "
+        ).strip().lower()
 
-    if confirmation not in {"y", "yes"}:
-        print("Memory discarded.")
+        if confirmation not in {"y", "yes"}:
+            print("Memory discarded.")
+            return
+
+        save_candidate_memory(candidate)
         return
 
     # ========================================================
-    # STEP 6: SAVE TO SQLITE AND CHROMA
+    # STEP 7: HANDLE REFINEMENT OR CONTRADICTION
     # ========================================================
 
-    try:
-        saved_memory = add_memory(
-            memory_type=candidate.memory_type,
-            content=candidate.content,
-            confidence=candidate.confidence,
-            importance=candidate.importance,
-        )
-
+    if existing is None:
         print(
-            f"Memory saved successfully with ID "
-            f"{saved_memory.id}."
+            "\nThe classifier reported a relationship but did "
+            "not return an existing memory. Nothing was saved."
         )
+        return
 
-    except Exception as error:
+    print("\nChoose how to handle this memory:")
+    print("1. Keep the existing memory")
+    print("2. Replace the existing memory")
+    print("3. Keep both memories")
+    print("4. Cancel")
+
+    choice = input(
+        "\nSelection: "
+    ).strip()
+
+    if choice == "1":
         print(
-            f"Could not save proposed memory: {error}"
+            "Existing memory retained. "
+            "The proposed memory was discarded."
         )
+        return
 
+    if choice == "2":
+        confirmation = input(
+            "Type REPLACE to confirm: "
+        ).strip()
+
+        if confirmation != "REPLACE":
+            print("Replacement cancelled.")
+            return
+
+        replace_existing_with_candidate(
+            existing_memory_id=existing.memory_id,
+            candidate=candidate,
+        )
+        return
+
+    if choice == "3":
+        confirmation = input(
+            "Type BOTH to keep both memories: "
+        ).strip()
+
+        if confirmation != "BOTH":
+            print("Save cancelled.")
+            return
+
+        save_candidate_memory(candidate)
+        return
+
+    if choice == "4":
+        print("Memory decision cancelled.")
+        return
+
+    print(
+        "Invalid selection. The proposed memory was not saved."
+    )
 def quit_program() -> None:
     """
     Exit the terminal application cleanly.
