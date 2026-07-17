@@ -1,0 +1,9 @@
+Chroma returns distance scores when performing similarity search.
+
+A lower distance generally indicates that the query embedding is closer to the document embedding. A smaller distance therefore usually represents a more semantically relevant result.
+
+Distance is not the same as a percentage or probability. A distance of 0.8 does not mean that a document is 80 percent relevant.
+
+Distance values depend on the embedding model and distance metric. They should be evaluated using representative test questions rather than interpreted using one universal threshold.
+
+For a retrieval system, developers can inspect the top retrieved chunks and tune a maximum distance threshold to reject irrelevant results.
