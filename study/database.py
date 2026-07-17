@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from py_compile import main
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
-
 from rag.database import get_connection
 
 
@@ -28,6 +31,82 @@ ALLOWED_INTERACTION_OUTCOMES = {
 # ============================================================
 # DATABASE MODELS
 # ============================================================
+
+@dataclass(frozen=True)
+class QuizQuestionSourceInput:
+    source_index: int
+    filename: str
+    page_number: int | None
+    chunk_index: int | None
+    distance: float | None
+
+
+@dataclass(frozen=True)
+class QuizQuestionAttemptInput:
+    question_number: int
+    question: str
+    options: tuple[str, str, str, str]
+
+    presented: bool
+    selected_option: int | None
+    correct_option: int
+    is_correct: bool
+    skipped: bool
+
+    explanation: str
+
+    sources: tuple[
+        QuizQuestionSourceInput,
+        ...
+    ] = ()
+
+
+@dataclass(frozen=True)
+class StoredQuizAttempt:
+    id: int
+    requested_topic: str
+    quiz_topic: str
+    status: str
+
+    total_questions: int
+    presented_questions: int
+    answered_questions: int
+    skipped_questions: int
+    correct_answers: int
+
+    score_percentage: float
+    accuracy_percentage: float | None
+
+    confidence: float
+    created_at: str
+
+
+@dataclass(frozen=True)
+class StoredQuizQuestionAttempt:
+    id: int
+    quiz_attempt_id: int
+    question_number: int
+    question: str
+    options: tuple[str, str, str, str]
+
+    presented: bool
+    selected_option: int | None
+    correct_option: int
+    is_correct: bool
+    skipped: bool
+
+    explanation: str
+
+
+@dataclass(frozen=True)
+class StoredQuizQuestionSource:
+    id: int
+    question_attempt_id: int
+    source_index: int
+    filename: str
+    page_number: int | None
+    chunk_index: int | None
+    distance: float | None
 
 @dataclass(frozen=True)
 class StoredStudySession:
@@ -70,6 +149,721 @@ class StoredInteractionSource:
 # ============================================================
 # INITIALIZATION
 # ============================================================
+
+def _row_to_stored_quiz_attempt(
+    row,
+) -> StoredQuizAttempt:
+    return StoredQuizAttempt(
+        id=row["id"],
+        requested_topic=row["requested_topic"],
+        quiz_topic=row["quiz_topic"],
+        status=row["status"],
+        total_questions=row["total_questions"],
+        presented_questions=row[
+            "presented_questions"
+        ],
+        answered_questions=row[
+            "answered_questions"
+        ],
+        skipped_questions=row[
+            "skipped_questions"
+        ],
+        correct_answers=row["correct_answers"],
+        score_percentage=row["score_percentage"],
+        accuracy_percentage=row[
+            "accuracy_percentage"
+        ],
+        confidence=row["confidence"],
+        created_at=row["created_at"],
+    )
+
+
+def _row_to_stored_quiz_question_attempt(
+    row,
+) -> StoredQuizQuestionAttempt:
+    options_value = json.loads(
+        row["options_json"]
+    )
+
+    if (
+        not isinstance(options_value, list)
+        or len(options_value) != 4
+    ):
+        raise RuntimeError(
+            "Stored quiz question contains invalid options."
+        )
+
+    return StoredQuizQuestionAttempt(
+        id=row["id"],
+        quiz_attempt_id=row["quiz_attempt_id"],
+        question_number=row["question_number"],
+        question=row["question"],
+        options=(
+            str(options_value[0]),
+            str(options_value[1]),
+            str(options_value[2]),
+            str(options_value[3]),
+        ),
+        presented=bool(row["presented"]),
+        selected_option=row["selected_option"],
+        correct_option=row["correct_option"],
+        is_correct=bool(row["is_correct"]),
+        skipped=bool(row["skipped"]),
+        explanation=row["explanation"],
+    )
+
+
+def _row_to_stored_quiz_question_source(
+    row,
+) -> StoredQuizQuestionSource:
+    return StoredQuizQuestionSource(
+        id=row["id"],
+        question_attempt_id=row[
+            "question_attempt_id"
+        ],
+        source_index=row["source_index"],
+        filename=row["filename"],
+        page_number=row["page_number"],
+        chunk_index=row["chunk_index"],
+        distance=row["distance"],
+    )
+
+def validate_quiz_question_inputs(
+    questions: list[
+        QuizQuestionAttemptInput
+    ],
+) -> None:
+    if not questions:
+        raise ValueError(
+            "A quiz attempt must contain at least one "
+            "question."
+        )
+
+    expected_numbers = list(
+        range(1, len(questions) + 1)
+    )
+
+    actual_numbers = [
+        question.question_number
+        for question in questions
+    ]
+
+    if actual_numbers != expected_numbers:
+        raise ValueError(
+            "Quiz question numbers must be sequential, "
+            "starting at 1."
+        )
+
+    for question in questions:
+        if not question.question.strip():
+            raise ValueError(
+                "Quiz question text cannot be empty."
+            )
+
+        if len(question.options) != 4:
+            raise ValueError(
+                "Each quiz question must contain four "
+                "options."
+            )
+
+        cleaned_options = [
+            option.strip()
+            for option in question.options
+        ]
+
+        if any(
+            not option
+            for option in cleaned_options
+        ):
+            raise ValueError(
+                "Quiz options cannot be empty."
+            )
+
+        if len(
+            {
+                option.casefold()
+                for option in cleaned_options
+            }
+        ) != 4:
+            raise ValueError(
+                "Quiz options must be unique."
+            )
+
+        if not 1 <= question.correct_option <= 4:
+            raise ValueError(
+                "Correct option must be between 1 and 4."
+            )
+
+        if not question.explanation.strip():
+            raise ValueError(
+                "Quiz explanation cannot be empty."
+            )
+
+        if not question.presented:
+            if question.selected_option is not None:
+                raise ValueError(
+                    "An unpresented question cannot have a "
+                    "selected option."
+                )
+
+            if question.skipped:
+                raise ValueError(
+                    "An unpresented question cannot be "
+                    "marked skipped."
+                )
+
+            if question.is_correct:
+                raise ValueError(
+                    "An unpresented question cannot be "
+                    "marked correct."
+                )
+
+        elif question.skipped:
+            if question.selected_option is not None:
+                raise ValueError(
+                    "A skipped question cannot have a "
+                    "selected option."
+                )
+
+            if question.is_correct:
+                raise ValueError(
+                    "A skipped question cannot be correct."
+                )
+
+        else:
+            if question.selected_option is None:
+                raise ValueError(
+                    "A presented, non-skipped question must "
+                    "contain a selected option."
+                )
+
+            if not 1 <= question.selected_option <= 4:
+                raise ValueError(
+                    "Selected option must be between 1 and 4."
+                )
+
+            expected_correctness = (
+                question.selected_option
+                == question.correct_option
+            )
+
+            if (
+                question.is_correct
+                != expected_correctness
+            ):
+                raise ValueError(
+                    "Quiz correctness does not match the "
+                    "selected and correct options."
+                )
+
+        source_indexes = [
+            source.source_index
+            for source in question.sources
+        ]
+
+        if len(source_indexes) != len(
+            set(source_indexes)
+        ):
+            raise ValueError(
+                "Quiz question source indexes must be "
+                "unique."
+            )
+
+        for source in question.sources:
+            if source.source_index <= 0:
+                raise ValueError(
+                    "Source index must be greater than zero."
+                )
+
+            if not source.filename.strip():
+                raise ValueError(
+                    "Source filename cannot be empty."
+                )
+            
+def get_quiz_attempt(
+    quiz_attempt_id: int,
+) -> StoredQuizAttempt | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM quiz_attempts
+            WHERE id = ?
+            """,
+            (quiz_attempt_id,),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return _row_to_stored_quiz_attempt(
+        row
+    )
+
+
+def list_quiz_attempts(
+    limit: int | None = None,
+) -> list[StoredQuizAttempt]:
+    if limit is not None and limit <= 0:
+        raise ValueError(
+            "Quiz-attempt limit must be greater than zero."
+        )
+
+    query = """
+        SELECT *
+        FROM quiz_attempts
+        ORDER BY created_at DESC, id DESC
+    """
+
+    parameters: tuple[object, ...] = ()
+
+    if limit is not None:
+        query += " LIMIT ?"
+        parameters = (limit,)
+
+    with get_connection() as connection:
+        rows = connection.execute(
+            query,
+            parameters,
+        ).fetchall()
+
+    return [
+        _row_to_stored_quiz_attempt(row)
+        for row in rows
+    ]
+
+
+def list_quiz_question_attempts(
+    quiz_attempt_id: int,
+) -> list[StoredQuizQuestionAttempt]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM quiz_question_attempts
+            WHERE quiz_attempt_id = ?
+            ORDER BY question_number ASC
+            """,
+            (quiz_attempt_id,),
+        ).fetchall()
+
+    return [
+        _row_to_stored_quiz_question_attempt(
+            row
+        )
+        for row in rows
+    ]
+
+
+def list_quiz_question_sources(
+    question_attempt_id: int,
+) -> list[StoredQuizQuestionSource]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM quiz_question_sources
+            WHERE question_attempt_id = ?
+            ORDER BY source_index ASC
+            """,
+            (question_attempt_id,),
+        ).fetchall()
+
+    return [
+        _row_to_stored_quiz_question_source(
+            row
+        )
+        for row in rows
+    ]
+            
+def insert_quiz_attempt_with_questions(
+    *,
+    requested_topic: str,
+    quiz_topic: str,
+    confidence: float,
+    aborted: bool,
+    questions: list[
+        QuizQuestionAttemptInput
+    ],
+) -> tuple[
+    StoredQuizAttempt,
+    tuple[StoredQuizQuestionAttempt, ...],
+]:
+    cleaned_requested_topic = (
+        requested_topic.strip()
+    )
+
+    cleaned_quiz_topic = quiz_topic.strip()
+
+    if not cleaned_requested_topic:
+        raise ValueError(
+            "Requested quiz topic cannot be empty."
+        )
+
+    if not cleaned_quiz_topic:
+        raise ValueError(
+            "Generated quiz topic cannot be empty."
+        )
+
+    if not 0 <= confidence <= 1:
+        raise ValueError(
+            "Quiz confidence must be between 0 and 1."
+        )
+
+    validate_quiz_question_inputs(
+        questions
+    )
+
+    total_questions = len(questions)
+
+    presented_questions = sum(
+        1
+        for question in questions
+        if question.presented
+    )
+
+    answered_questions = sum(
+        1
+        for question in questions
+        if (
+            question.presented
+            and not question.skipped
+            and question.selected_option is not None
+        )
+    )
+
+    skipped_questions = sum(
+        1
+        for question in questions
+        if question.skipped
+    )
+
+    correct_answers = sum(
+        1
+        for question in questions
+        if question.is_correct
+    )
+
+    score_percentage = (
+        correct_answers
+        / total_questions
+        * 100
+    )
+
+    accuracy_percentage = (
+        correct_answers
+        / answered_questions
+        * 100
+        if answered_questions > 0
+        else None
+    )
+
+    status = (
+        "aborted"
+        if aborted
+        else "completed"
+    )
+
+    created_at = datetime.now(
+        timezone.utc
+    ).isoformat()
+
+    question_ids: list[int] = []
+
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO quiz_attempts (
+                requested_topic,
+                quiz_topic,
+                status,
+                total_questions,
+                presented_questions,
+                answered_questions,
+                skipped_questions,
+                correct_answers,
+                score_percentage,
+                accuracy_percentage,
+                confidence,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                cleaned_requested_topic,
+                cleaned_quiz_topic,
+                status,
+                total_questions,
+                presented_questions,
+                answered_questions,
+                skipped_questions,
+                correct_answers,
+                score_percentage,
+                accuracy_percentage,
+                confidence,
+                created_at,
+            ),
+        )
+
+        quiz_attempt_id = cursor.lastrowid
+
+        if quiz_attempt_id is None:
+            raise RuntimeError(
+                "Quiz attempt ID was not created."
+            )
+
+        for question in questions:
+            question_cursor = connection.execute(
+                """
+                INSERT INTO quiz_question_attempts (
+                    quiz_attempt_id,
+                    question_number,
+                    question,
+                    options_json,
+                    presented,
+                    selected_option,
+                    correct_option,
+                    is_correct,
+                    skipped,
+                    explanation
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    quiz_attempt_id,
+                    question.question_number,
+                    question.question.strip(),
+                    json.dumps(
+                        list(question.options),
+                        ensure_ascii=False,
+                    ),
+                    int(question.presented),
+                    question.selected_option,
+                    question.correct_option,
+                    int(question.is_correct),
+                    int(question.skipped),
+                    question.explanation.strip(),
+                ),
+            )
+
+            question_attempt_id = (
+                question_cursor.lastrowid
+            )
+
+            if question_attempt_id is None:
+                raise RuntimeError(
+                    "Quiz question attempt ID was not "
+                    "created."
+                )
+
+            question_ids.append(
+                question_attempt_id
+            )
+
+            for source in question.sources:
+                connection.execute(
+                    """
+                    INSERT INTO quiz_question_sources (
+                        question_attempt_id,
+                        source_index,
+                        filename,
+                        page_number,
+                        chunk_index,
+                        distance
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        question_attempt_id,
+                        source.source_index,
+                        source.filename.strip(),
+                        source.page_number,
+                        source.chunk_index,
+                        source.distance,
+                    ),
+                )
+
+    stored_attempt = get_quiz_attempt(
+        quiz_attempt_id
+    )
+
+    if stored_attempt is None:
+        raise RuntimeError(
+            "Stored quiz attempt could not be loaded."
+        )
+
+    stored_questions = tuple(
+        question
+        for question
+        in list_quiz_question_attempts(
+            quiz_attempt_id
+        )
+    )
+
+    return (
+        stored_attempt,
+        stored_questions,
+    )
+
+def initialize_quiz_database_tables(
+    connection,
+) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quiz_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            requested_topic TEXT NOT NULL,
+            quiz_topic TEXT NOT NULL,
+
+            status TEXT NOT NULL
+                CHECK (
+                    status IN (
+                        'completed',
+                        'aborted'
+                    )
+                ),
+
+            total_questions INTEGER NOT NULL
+                CHECK (total_questions > 0),
+
+            presented_questions INTEGER NOT NULL
+                CHECK (presented_questions >= 0),
+
+            answered_questions INTEGER NOT NULL
+                CHECK (answered_questions >= 0),
+
+            skipped_questions INTEGER NOT NULL
+                CHECK (skipped_questions >= 0),
+
+            correct_answers INTEGER NOT NULL
+                CHECK (correct_answers >= 0),
+
+            score_percentage REAL NOT NULL
+                CHECK (
+                    score_percentage >= 0
+                    AND score_percentage <= 100
+                ),
+
+            accuracy_percentage REAL
+                CHECK (
+                    accuracy_percentage IS NULL
+                    OR (
+                        accuracy_percentage >= 0
+                        AND accuracy_percentage <= 100
+                    )
+                ),
+
+            confidence REAL NOT NULL
+                CHECK (
+                    confidence >= 0
+                    AND confidence <= 1
+                ),
+
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quiz_question_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            quiz_attempt_id INTEGER NOT NULL,
+
+            question_number INTEGER NOT NULL
+                CHECK (question_number > 0),
+
+            question TEXT NOT NULL,
+            options_json TEXT NOT NULL,
+
+            presented INTEGER NOT NULL
+                CHECK (presented IN (0, 1)),
+
+            selected_option INTEGER
+                CHECK (
+                    selected_option IS NULL
+                    OR selected_option BETWEEN 1 AND 4
+                ),
+
+            correct_option INTEGER NOT NULL
+                CHECK (correct_option BETWEEN 1 AND 4),
+
+            is_correct INTEGER NOT NULL
+                CHECK (is_correct IN (0, 1)),
+
+            skipped INTEGER NOT NULL
+                CHECK (skipped IN (0, 1)),
+
+            explanation TEXT NOT NULL,
+
+            FOREIGN KEY (
+                quiz_attempt_id
+            )
+            REFERENCES quiz_attempts(id)
+            ON DELETE CASCADE,
+
+            UNIQUE (
+                quiz_attempt_id,
+                question_number
+            )
+        )
+        """
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quiz_question_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            question_attempt_id INTEGER NOT NULL,
+
+            source_index INTEGER NOT NULL
+                CHECK (source_index > 0),
+
+            filename TEXT NOT NULL,
+            page_number INTEGER,
+            chunk_index INTEGER,
+            distance REAL,
+
+            FOREIGN KEY (
+                question_attempt_id
+            )
+            REFERENCES quiz_question_attempts(id)
+            ON DELETE CASCADE,
+
+            UNIQUE (
+                question_attempt_id,
+                source_index
+            )
+        )
+        """
+    )
+
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+        idx_quiz_attempts_created_at
+        ON quiz_attempts(created_at)
+        """
+    )
+
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+        idx_quiz_questions_attempt_id
+        ON quiz_question_attempts(quiz_attempt_id)
+        """
+    )
+
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+        idx_quiz_sources_question_id
+        ON quiz_question_sources(question_attempt_id)
+        """
+    )
 
 def initialize_study_database() -> None:
     """
@@ -222,6 +1016,10 @@ def initialize_study_database() -> None:
             idx_study_sources_filename
             ON study_interaction_sources(filename)
             """
+
+        )
+        initialize_quiz_database_tables(
+            connection
         )
 
 

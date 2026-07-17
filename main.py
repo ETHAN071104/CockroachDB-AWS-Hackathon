@@ -83,6 +83,19 @@ from study.quiz_runner import (
     format_quiz_run_result,
     run_quiz_interactively,
 )
+from study.quiz_history import (
+    save_quiz_run_result,
+)
+from study.database import (
+    # existing imports...
+    list_quiz_attempts,
+)
+from study.quiz_reporting import (
+    build_quiz_attempt_report,
+    build_quiz_performance_report,
+    format_quiz_attempt_report,
+    format_quiz_performance_report,
+)
 
 def save_candidate_memory(
     candidate: MemoryCandidate,
@@ -949,17 +962,164 @@ def view_study_progress_interface() -> None:
             f"\nCould not build progress report: {error}"
         )
 
+def list_quiz_attempts_interface() -> None:
+    attempts = list_quiz_attempts()
+
+    print("\nQUIZ ATTEMPTS")
+
+    if not attempts:
+        print("No stored quiz attempts found.")
+        return
+
+    for attempt in attempts:
+        accuracy = (
+            f"{attempt.accuracy_percentage:.1f}%"
+            if attempt.accuracy_percentage is not None
+            else "N/A"
+        )
+
+        print("\n" + "-" * 60)
+        print(f"Attempt ID: {attempt.id}")
+        print(f"Topic: {attempt.quiz_topic}")
+        print(f"Status: {attempt.status}")
+        print(
+            f"Score: {attempt.score_percentage:.1f}%"
+        )
+        print(f"Accuracy: {accuracy}")
+        print(f"Created: {attempt.created_at}")
+
+
+def select_quiz_attempt_id() -> int | None:
+    attempts = list_quiz_attempts()
+
+    if not attempts:
+        print("No stored quiz attempts found.")
+        return None
+
+    print("\nAvailable quiz attempts:")
+
+    for attempt in attempts:
+        print(
+            f"- ID {attempt.id}: "
+            f"{attempt.quiz_topic}, "
+            f"{attempt.status}, "
+            f"{attempt.score_percentage:.1f}%"
+        )
+
+    try:
+        raw_id = input(
+            "\nEnter attempt ID or /back: "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+    if raw_id.lower() == "/back":
+        return None
+
+    try:
+        attempt_id = int(raw_id)
+    except ValueError:
+        print("Attempt ID must be a number.")
+        return None
+
+    if not any(
+        attempt.id == attempt_id
+        for attempt in attempts
+    ):
+        print(
+            f"Quiz attempt ID {attempt_id} was not found."
+        )
+        return None
+
+    return attempt_id
+
+
+def view_quiz_attempt_report_interface() -> None:
+    print("\nVIEW QUIZ ATTEMPT")
+
+    attempt_id = select_quiz_attempt_id()
+
+    if attempt_id is None:
+        return
+
+    try:
+        report = build_quiz_attempt_report(
+            attempt_id
+        )
+
+        print()
+        print(
+            format_quiz_attempt_report(
+                report
+            )
+        )
+
+    except Exception as error:
+        print(
+            "\nCould not build quiz-attempt report: "
+            f"{error}"
+        )
+
+
+def view_quiz_performance_interface() -> None:
+    print("\nVIEW QUIZ PERFORMANCE")
+
+    try:
+        raw_limit = input(
+            "Number of recent attempts "
+            "[blank for all]: "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+
+    attempt_limit: int | None = None
+
+    if raw_limit:
+        try:
+            attempt_limit = int(raw_limit)
+        except ValueError:
+            print(
+                "Attempt limit must be a number."
+            )
+            return
+
+        if attempt_limit <= 0:
+            print(
+                "Attempt limit must be greater than zero."
+            )
+            return
+
+    try:
+        report = build_quiz_performance_report(
+            attempt_limit=attempt_limit
+        )
+
+        print()
+        print(
+            format_quiz_performance_report(
+                report
+            )
+        )
+
+    except Exception as error:
+        print(
+            "\nCould not build quiz-performance report: "
+            f"{error}"
+        )
+
 def study_reports_interface() -> None:
-    """
-    Study-session history, summaries, and progress submenu.
-    """
     while True:
         print("\nSTUDY REPORTS")
         print("1. List study sessions")
         print("2. View session report")
         print("3. Generate AI session summary")
-        print("4. View overall progress")
-        print("5. Back")
+        print("4. View overall study progress")
+        print("5. List quiz attempts")
+        print("6. View quiz attempt report")
+        print("7. View quiz performance")
+        print("8. Back")
 
         try:
             choice = input(
@@ -982,12 +1142,21 @@ def study_reports_interface() -> None:
             view_study_progress_interface()
 
         elif choice == "5":
+            list_quiz_attempts_interface()
+
+        elif choice == "6":
+            view_quiz_attempt_report_interface()
+
+        elif choice == "7":
+            view_quiz_performance_interface()
+
+        elif choice == "8":
             return
 
         else:
             print(
                 "Invalid selection. "
-                "Enter a number from 1 to 5."
+                "Enter a number from 1 to 8."
             )
 
 def view_review_queue_interface() -> None:
@@ -1131,9 +1300,7 @@ def generate_review_activity_interface() -> None:
 
 def take_grounded_quiz_interface() -> None:
     """
-    Generate and run a grounded multiple-choice quiz.
-
-    Quiz attempts are not stored during Milestone 6B.
+    Generate, run, and store a grounded multiple-choice quiz.
     """
     print("\nTAKE GROUNDED QUIZ")
 
@@ -1224,11 +1391,35 @@ def take_grounded_quiz_interface() -> None:
         result = run_quiz_interactively(
             generated_quiz
         )
+
     except Exception as error:
         print(
             f"\nCould not run quiz: {error}"
         )
         return
+
+    try:
+        stored_attempt, stored_questions = (
+            save_quiz_run_result(
+                result
+            )
+        )
+
+        print("\nQuiz history saved.")
+        print(
+            f"Quiz attempt ID: {stored_attempt.id}"
+        )
+        print(
+            "Questions stored: "
+            f"{len(stored_questions)}"
+        )
+
+    except Exception as history_error:
+        print(
+            "\nWarning: the quiz result was calculated, "
+            "but its history could not be saved: "
+            f"{history_error}"
+        )
 
     print()
     print(
