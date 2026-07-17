@@ -52,8 +52,21 @@ from study.database import (
     get_or_create_active_study_session,
     initialize_study_database,
     insert_study_interaction_with_sources,
+    list_study_sessions,
+    update_interaction_outcome,
 )
 
+from study.progress import (
+    build_progress_report,
+    format_progress_report,
+)
+from study.reporting import (
+    build_session_report,
+    format_session_report,
+)
+from study.summarizer import (
+    generate_session_summary,
+)
 
 def save_candidate_memory(
     candidate: MemoryCandidate,
@@ -689,6 +702,278 @@ def consolidate_memories_interface() -> None:
         f"{result.consolidated_memory.content}"
     )
 
+def list_study_sessions_interface() -> None:
+    """
+    Display every stored study session.
+    """
+    sessions = list_study_sessions()
+
+    print("\nSTUDY SESSIONS")
+
+    if not sessions:
+        print("No study sessions found.")
+        return
+
+    for session in sessions:
+        print("\n" + "-" * 60)
+        print(f"Session ID: {session.id}")
+        print(f"Status: {session.status}")
+        print(f"Started: {session.started_at}")
+        print(
+            "Ended: "
+            f"{session.ended_at or 'Not completed'}"
+        )
+
+def select_study_session_id(
+    *,
+    completed_only: bool = False,
+) -> int | None:
+    """
+    Show available sessions and ask the user to select one.
+
+    Returns None when the user enters /back.
+    """
+    sessions = list_study_sessions()
+
+    if completed_only:
+        sessions = [
+            session
+            for session in sessions
+            if session.status == "completed"
+        ]
+
+    if not sessions:
+        if completed_only:
+            print(
+                "No completed study sessions were found."
+            )
+        else:
+            print("No study sessions were found.")
+
+        return None
+
+    print("\nAvailable study sessions:")
+
+    for session in sessions:
+        print(
+            f"- ID {session.id}: "
+            f"{session.status}, "
+            f"started {session.started_at}"
+        )
+
+    raw_id = input(
+        "\nEnter session ID or /back: "
+    ).strip()
+
+    if raw_id.lower() == "/back":
+        return None
+
+    try:
+        session_id = int(raw_id)
+    except ValueError:
+        print("Session ID must be a number.")
+        return None
+
+    selected = next(
+        (
+            session
+            for session in sessions
+            if session.id == session_id
+        ),
+        None,
+    )
+
+    if selected is None:
+        print(
+            f"Session ID {session_id} was not found "
+            "in the available sessions."
+        )
+        return None
+
+    return session_id
+
+def view_session_report_interface() -> None:
+    """
+    Display a deterministic report for one study session.
+    """
+    print("\nVIEW STUDY SESSION REPORT")
+
+    session_id = select_study_session_id()
+
+    if session_id is None:
+        return
+
+    try:
+        report = build_session_report(
+            session_id
+        )
+
+        print()
+        print(
+            format_session_report(
+                report
+            )
+        )
+
+    except Exception as error:
+        print(
+            f"\nCould not build session report: {error}"
+        )
+
+def generate_session_summary_interface() -> None:
+    """
+    Generate a grounded AI summary for one completed session.
+    """
+    print("\nGENERATE AI SESSION SUMMARY")
+
+    session_id = select_study_session_id(
+        completed_only=True
+    )
+
+    if session_id is None:
+        return
+
+    try:
+        print("\nGenerating session summary...")
+
+        result = generate_session_summary(
+            session_id
+        )
+
+        summary = result.summary
+
+        print("\n" + "=" * 60)
+        print(
+            f"AI SUMMARY — SESSION "
+            f"{summary.session_id}"
+        )
+        print("=" * 60)
+
+        print("\nOverview:")
+        print(summary.overview)
+
+        print("\nStrengths:")
+
+        if summary.strengths:
+            for strength in summary.strengths:
+                print(f"- {strength}")
+        else:
+            print("- None supported by recorded outcomes")
+
+        print("\nTopics requiring review:")
+
+        if summary.review_topics:
+            for topic in summary.review_topics:
+                print(f"- {topic}")
+        else:
+            print("- None supported by recorded outcomes")
+
+        print("\nSuggested next steps:")
+
+        if summary.next_steps:
+            for step in summary.next_steps:
+                print(f"- {step}")
+        else:
+            print("- No specific next steps generated")
+
+        print(
+            "\nSummary confidence: "
+            f"{summary.confidence:.2f}"
+        )
+
+    except Exception as error:
+        print(
+            f"\nCould not generate session summary: {error}"
+        )
+
+def view_study_progress_interface() -> None:
+    """
+    Display deterministic progress across completed sessions.
+    """
+    print("\nVIEW STUDY PROGRESS")
+
+    raw_limit = input(
+        "Number of recent sessions "
+        "[blank for all]: "
+    ).strip()
+
+    session_limit: int | None = None
+
+    if raw_limit:
+        try:
+            session_limit = int(
+                raw_limit
+            )
+        except ValueError:
+            print(
+                "Session limit must be a number."
+            )
+            return
+
+        if session_limit <= 0:
+            print(
+                "Session limit must be greater than zero."
+            )
+            return
+
+    try:
+        report = build_progress_report(
+            session_limit=session_limit
+        )
+
+        print()
+        print(
+            format_progress_report(
+                report
+            )
+        )
+
+    except Exception as error:
+        print(
+            f"\nCould not build progress report: {error}"
+        )
+
+def study_reports_interface() -> None:
+    """
+    Study-session history, summaries, and progress submenu.
+    """
+    while True:
+        print("\nSTUDY REPORTS")
+        print("1. List study sessions")
+        print("2. View session report")
+        print("3. Generate AI session summary")
+        print("4. View overall progress")
+        print("5. Back")
+
+        try:
+            choice = input(
+                "\nSelection: "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+
+        if choice == "1":
+            list_study_sessions_interface()
+
+        elif choice == "2":
+            view_session_report_interface()
+
+        elif choice == "3":
+            generate_session_summary_interface()
+
+        elif choice == "4":
+            view_study_progress_interface()
+
+        elif choice == "5":
+            return
+
+        else:
+            print(
+                "Invalid selection. "
+                "Enter a number from 1 to 5."
+            )
+
 def print_header() -> None:
     print("\n" + "=" * 60)
     print("LOCAL STUDY COMPANION RAG")
@@ -708,7 +993,8 @@ def print_menu() -> None:
     print("9. Archive learner memory")
     print("10. Delete learner memory")
     print("11. Consolidate learner memories")
-    print("12. Quit")
+    print("12. Study reports")
+    print("13. Quit")
 
 
 def add_file_interface() -> None:
@@ -795,6 +1081,89 @@ def complete_chat_study_session(
             "\nWarning: the study session could not be "
             f"completed: {error}"
         )
+
+def collect_interaction_outcome(
+    interaction_id: int,
+) -> None:
+    """
+    Ask the learner how well they understood one answer and
+    store the result.
+
+    Skipping keeps the existing outcome as 'unrated'.
+    """
+    print("\nHow well did you understand this answer?")
+    print("1. Understood")
+    print("2. Partially understood")
+    print("3. Confused")
+    print("4. Skip")
+
+    outcome_map = {
+        "1": "understood",
+        "understood": "understood",
+
+        "2": "partial",
+        "partial": "partial",
+        "partially": "partial",
+
+        "3": "confused",
+        "confused": "confused",
+
+        "4": "unrated",
+        "skip": "unrated",
+        "": "unrated",
+    }
+
+    while True:
+        try:
+            raw_choice = input(
+                "\nOutcome [1-4]: "
+            ).strip().lower()
+
+        except (EOFError, KeyboardInterrupt):
+            print(
+                "\nOutcome skipped. "
+                "The interaction remains unrated."
+            )
+            return
+
+        outcome = outcome_map.get(
+            raw_choice
+        )
+
+        if outcome is None:
+            print(
+                "Invalid selection. Enter 1, 2, 3, or 4."
+            )
+            continue
+
+        if outcome == "unrated":
+            print(
+                "Outcome skipped. "
+                "The interaction remains unrated."
+            )
+            return
+
+        try:
+            updated_interaction = (
+                update_interaction_outcome(
+                    interaction_id=interaction_id,
+                    outcome=outcome,
+                )
+            )
+
+        except Exception as error:
+            print(
+                "\nWarning: learner outcome could not be "
+                f"saved: {error}"
+            )
+            return
+
+        print(
+            "\nLearning outcome saved: "
+            f"{updated_interaction.outcome}"
+        )
+
+        return
 
 def chat_interface() -> None:
     documents = list_documents()
@@ -929,6 +1298,9 @@ def chat_interface() -> None:
                     "Sources recorded: "
                     f"{len(stored_sources)}"
                 )
+                collect_interaction_outcome(
+                    interaction_id=interaction.id,
+                    )
 
             except Exception as history_error:
                 # The generated answer remains useful even when
@@ -1067,10 +1439,12 @@ def main() -> None:
         elif choice == "11":
             consolidate_memories_interface()
         elif choice == "12":
+            study_reports_interface()
+        elif choice == "13":
             quit_program()
         else:
             print(
-                "Invalid selection. Enter a number from 1 to 12."
+                "Invalid selection. Enter a number from 1 to 13."
             )
     
 
