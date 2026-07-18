@@ -96,7 +96,14 @@ from study.quiz_reporting import (
     format_quiz_attempt_report,
     format_quiz_performance_report,
 )
-
+from study.planner import (
+    build_adaptive_study_plan,
+    format_adaptive_study_plan,
+)
+from study.coach import (
+    format_coaching_plan,
+    generate_coaching_plan,
+)
 def save_candidate_memory(
     candidate: MemoryCandidate,
 ) -> None:
@@ -1428,53 +1435,188 @@ def take_grounded_quiz_interface() -> None:
         )
     )
 
-def study_actions_interface() -> None:
+def collect_study_plan_settings() -> (
+    tuple[int, int] | None
+):
     """
-    Adaptive study tools submenu.
-    """
-    while True:
-        print("\nSTUDY ACTIONS")
-        print("1. View review queue")
-        print("2. Generate grounded review activity")
-        print("3. Take grounded quiz")
-        print("4. Back")
+    Ask for the study-time budget and maximum plan items.
 
+    Returns None when cancelled or invalid.
+    """
+    try:
+        raw_minutes = input(
+            "Study time in minutes [default 45]: "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+    if raw_minutes.lower() == "/back":
+        return None
+
+    total_minutes = 45
+
+    if raw_minutes:
         try:
-            choice = input(
-                "\nSelection: "
-            ).strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-
-        if choice == "1":
-            view_review_queue_interface()
-
-        elif choice == "2":
-            generate_review_activity_interface()
-
-        elif choice == "3":
-            take_grounded_quiz_interface()
-
-        elif choice == "4":
-            return
-
-        else:
-            print(
-                "Invalid selection. "
-                "Enter a number from 1 to 4."
+            total_minutes = int(
+                raw_minutes
             )
+        except ValueError:
+            print(
+                "Study time must be a number."
+            )
+            return None
+
+    if not 10 <= total_minutes <= 240:
+        print(
+            "Study time must be between "
+            "10 and 240 minutes."
+        )
+        return None
+
+    try:
+        raw_items = input(
+            "Maximum plan items [default 5]: "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+    if raw_items.lower() == "/back":
+        return None
+
+    max_items = 5
+
+    if raw_items:
+        try:
+            max_items = int(
+                raw_items
+            )
+        except ValueError:
+            print(
+                "Maximum plan items must be a number."
+            )
+            return None
+
+    if not 1 <= max_items <= 20:
+        print(
+            "Maximum plan items must be "
+            "between 1 and 20."
+        )
+        return None
+
+    return (
+        total_minutes,
+        max_items,
+    )
+
+def view_adaptive_study_plan_interface() -> None:
+    """
+    Build and display a deterministic adaptive study plan.
+    """
+    print("\nVIEW ADAPTIVE STUDY PLAN")
+
+    settings = collect_study_plan_settings()
+
+    if settings is None:
+        return
+
+    total_minutes, max_items = settings
+
+    try:
+        plan = build_adaptive_study_plan(
+            total_minutes=total_minutes,
+            max_items=max_items,
+        )
+
+        print()
+        print(
+            format_adaptive_study_plan(
+                plan
+            )
+        )
+
+    except Exception as error:
+        print(
+            "\nCould not build adaptive study plan: "
+            f"{error}"
+        )
+
+def generate_coaching_plan_interface() -> None:
+    """
+    Generate grounded review, practice, and reassessment
+    activities for an adaptive study plan.
+    """
+    print("\nGENERATE GROUNDED COACHING PLAN")
+
+    settings = collect_study_plan_settings()
+
+    if settings is None:
+        return
+
+    total_minutes, max_items = settings
+
+    try:
+        print(
+            "\nBuilding adaptive study plan..."
+        )
+
+        study_plan = build_adaptive_study_plan(
+            total_minutes=total_minutes,
+            max_items=max_items,
+        )
+
+    except Exception as error:
+        print(
+            "\nCould not build adaptive study plan: "
+            f"{error}"
+        )
+        return
+
+    if not study_plan.items:
+        print()
+        print(
+            format_adaptive_study_plan(
+                study_plan
+            )
+        )
+        return
+
+    try:
+        print(
+            "\nRetrieving sources and generating "
+            "coaching activities..."
+        )
+
+        coaching_plan = generate_coaching_plan(
+            study_plan
+        )
+
+        print()
+        print(
+            format_coaching_plan(
+                coaching_plan
+            )
+        )
+
+    except Exception as error:
+        print(
+            "\nCould not generate coaching plan: "
+            f"{error}"
+        )
 
 def study_actions_interface() -> None:
     """
-    Adaptive study tools submenu.
+    Adaptive review, quiz, and planning tools.
     """
     while True:
         print("\nSTUDY ACTIONS")
         print("1. View review queue")
         print("2. Generate grounded review activity")
         print("3. Take grounded quiz")
-        print("4. Back")
+        print("4. View adaptive study plan")
+        print("5. Generate grounded coaching plan")
+        print("6. Back")
 
         try:
             choice = input(
@@ -1494,12 +1636,18 @@ def study_actions_interface() -> None:
             take_grounded_quiz_interface()
 
         elif choice == "4":
+            view_adaptive_study_plan_interface()
+
+        elif choice == "5":
+            generate_coaching_plan_interface()
+
+        elif choice == "6":
             return
 
         else:
             print(
                 "Invalid selection. "
-                "Enter a number from 1 to 4."
+                "Enter a number from 1 to 6."
             )
 
 def print_header() -> None:
