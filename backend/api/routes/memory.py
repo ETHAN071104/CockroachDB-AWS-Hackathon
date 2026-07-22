@@ -50,6 +50,21 @@ router = APIRouter(prefix="/api", tags=["memory"])
 
 
 def memory_response(memory: StoredMemory) -> MemoryResponse:
+    dependencies = get_application_dependencies()
+    linked_signals = [
+        signal
+        for signal in dependencies.learning_signals.list()
+        if signal.memory_id == memory.id
+    ]
+    evidence = [item for signal in linked_signals for item in signal.evidence]
+    latest_event = next(
+        (
+            event
+            for event in dependencies.adaptation_events.list(limit=100)
+            if memory.id in event.memory_ids
+        ),
+        None,
+    )
     return MemoryResponse(
         id=memory.id,
         memory_type=memory.memory_type,
@@ -59,6 +74,24 @@ def memory_response(memory: StoredMemory) -> MemoryResponse:
         status=memory.status,
         created_at=memory.created_at,
         updated_at=memory.updated_at,
+        evidence=evidence,
+        source_quiz_id=(
+            linked_signals[0].source_id if linked_signals else None
+        ),
+        occurrence_count=sum(signal.occurrence_count for signal in linked_signals),
+        improvement_state=(
+            linked_signals[0].status if linked_signals else None
+        ),
+        latest_use=(
+            {
+                "workflow_type": latest_event.workflow_type,
+                "request_id": latest_event.request_id,
+                "reason": latest_event.reason,
+                "created_at": latest_event.created_at,
+            }
+            if latest_event is not None
+            else None
+        ),
     )
 
 
@@ -85,6 +118,12 @@ def memory_proposal_response(
         ),
         reason=pending.conflict.reason,
         created_at=pending.created_at,
+        evidence=list(pending.evidence),
+        learning_signal_ids=list(pending.learning_signal_ids),
+        source_type=pending.source_type,
+        source_id=pending.source_id,
+        occurrence_count=pending.occurrence_count,
+        signal_status=pending.signal_status,
     )
 
 
@@ -200,6 +239,7 @@ def decide_memory_proposal_route(
             proposal_id=proposal_id,
             decision=payload.decision,
             replace_memory_id=payload.replace_memory_id,
+            edited_content=payload.edited_content,
         )
     except MemoryProposalNotFoundError as error:
         raise ApiError(

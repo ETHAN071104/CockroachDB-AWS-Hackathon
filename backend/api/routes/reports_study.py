@@ -32,7 +32,11 @@ from backend.api.report_schemas import (
     StudyPlanRequest,
     StudyPlanResponse,
 )
-from backend.api.schemas import RetrievalScopeRequest, SourceLineageResponse
+from backend.api.schemas import AdaptationResponse, RetrievalScopeRequest, SourceLineageResponse
+from backend.application.learning_loop import (
+    AdaptationContext,
+    record_adaptation_event,
+)
 from backend.rag.notebooks import get_document_record
 from backend.rag.scope import RetrievalScope
 from backend.study.coach import generate_coaching_plan
@@ -50,6 +54,30 @@ from backend.study.reviewer import generate_review_action
 from backend.study.summarizer import generate_session_summary
 
 router = APIRouter(prefix="/api", tags=["reports", "study"])
+
+
+def _adaptation(
+    context: AdaptationContext,
+    event_id: str | None = None,
+) -> AdaptationResponse:
+    return AdaptationResponse(
+        adapted_using_learner_memory=context.adapted,
+        targeted_topic=(
+            str(context.applied_changes.get("targeted_topic"))
+            if context.applied_changes.get("targeted_topic") is not None
+            else context.topic or None
+        ),
+        difficulty=(
+            str(context.applied_changes.get("difficulty"))
+            if context.applied_changes.get("difficulty") is not None
+            else None
+        ),
+        reason=context.reason,
+        memory_ids=list(context.memory_ids),
+        learning_signal_ids=list(context.learning_signal_ids),
+        applied_changes=context.applied_changes,
+        event_id=event_id,
+    )
 
 
 def _scope(scope: RetrievalScopeRequest | None) -> RetrievalScope | None:
@@ -201,6 +229,9 @@ def _recommendation(item: ReviewRecommendation) -> ReviewRecommendationResponse:
         source_document_ids=list(item.source_document_ids),
         created_at=item.created_at,
         reason=item.reason,
+        memory_ids=list(item.memory_ids),
+        learning_signal_ids=list(item.learning_signal_ids),
+        adaptation_reason=item.adaptation_reason,
     )
 
 
@@ -225,7 +256,11 @@ def _plan_item(item: StudyPlanItem) -> StudyPlanItemResponse:
     )
 
 
-def _plan(plan: AdaptiveStudyPlan) -> StudyPlanResponse:
+def _plan(
+    plan: AdaptiveStudyPlan,
+    *,
+    event_id: str | None = None,
+) -> StudyPlanResponse:
     return StudyPlanResponse(
         requested_minutes=plan.requested_minutes,
         allocated_minutes=plan.allocated_minutes,
@@ -235,6 +270,7 @@ def _plan(plan: AdaptiveStudyPlan) -> StudyPlanResponse:
         interactions_scanned=plan.interactions_scanned,
         quiz_attempts_scanned=plan.quiz_attempts_scanned,
         items=[_plan_item(item) for item in plan.items],
+        adaptation=_adaptation(plan.adaptation, event_id),
     )
 
 
@@ -461,11 +497,13 @@ def get_review_queue(
             message="Review scope is invalid.",
         ) from error
     items = [_recommendation(item) for item in queue.recommendations]
+    event = record_adaptation_event(queue.adaptation)
     return ReviewQueueResponse(
         items=items,
         total=len(items),
         completed_session_count=queue.completed_session_count,
         scanned_interaction_count=queue.scanned_interaction_count,
+        adaptation=_adaptation(queue.adaptation, event.id),
     )
 
 
@@ -529,6 +567,7 @@ def post_review_action(payload: ReviewGenerateRequest) -> ReviewActionResponse:
             message="Grounded review generation failed.",
         ) from error
     action = result.action
+    event = record_adaptation_event(result.adaptation)
     return ReviewActionResponse(
         recommendation=_recommendation(recommendation),
         should_generate=action.should_generate,
@@ -542,6 +581,7 @@ def post_review_action(payload: ReviewGenerateRequest) -> ReviewActionResponse:
         confidence=action.confidence,
         reason=action.reason,
         sources=[_source(source) for source in result.sources],
+        adaptation=_adaptation(result.adaptation, event.id),
     )
 
 
@@ -575,7 +615,8 @@ def post_study_plan(payload: StudyPlanRequest) -> StudyPlanResponse:
             code="invalid_study_plan",
             message="Study-plan request is invalid.",
         ) from error
-    return _plan(plan)
+    event = record_adaptation_event(plan.adaptation)
+    return _plan(plan, event_id=event.id)
 
 
 @router.post(
@@ -616,6 +657,7 @@ def post_coaching(payload: CoachingRequest) -> CoachingPlanResponse:
             code="coaching_generation_failed",
             message="Grounded coaching generation failed.",
         ) from error
+    event = record_adaptation_event(result.adaptation)
     return CoachingPlanResponse(
         plan=_plan(plan),
         generated_count=result.generated_count,
@@ -639,6 +681,7 @@ def post_coaching(payload: CoachingRequest) -> CoachingPlanResponse:
             )
             for item in result.items
         ],
+        adaptation=_adaptation(result.adaptation, event.id),
     )
 
 

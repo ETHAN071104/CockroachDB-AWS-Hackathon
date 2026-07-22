@@ -4,7 +4,12 @@ from typing import Literal
 
 from pydantic import Field
 
-from backend.api.schemas import ApiModel, RetrievalScopeRequest, SourceLineageResponse
+from backend.api.schemas import (
+    AdaptationResponse,
+    ApiModel,
+    RetrievalScopeRequest,
+    SourceLineageResponse,
+)
 
 
 class OutcomeCountsResponse(ApiModel):
@@ -138,6 +143,9 @@ class ReviewRecommendationResponse(ApiModel):
     source_document_ids: list[int]
     created_at: str
     reason: str
+    memory_ids: list[int] = Field(default_factory=list)
+    learning_signal_ids: list[str] = Field(default_factory=list)
+    adaptation_reason: str | None = None
 
 
 class ReviewQueueResponse(ApiModel):
@@ -145,6 +153,7 @@ class ReviewQueueResponse(ApiModel):
     total: int
     completed_session_count: int
     scanned_interaction_count: int
+    adaptation: AdaptationResponse | None = None
 
 
 class ReviewGenerateRequest(ApiModel):
@@ -165,6 +174,7 @@ class ReviewActionResponse(ApiModel):
     confidence: float
     reason: str
     sources: list[SourceLineageResponse]
+    adaptation: AdaptationResponse | None = None
 
 
 class StudyPlanRequest(ApiModel):
@@ -202,6 +212,7 @@ class StudyPlanResponse(ApiModel):
     interactions_scanned: int
     quiz_attempts_scanned: int
     items: list[StudyPlanItemResponse]
+    adaptation: AdaptationResponse | None = None
 
 
 class CoachingRequest(StudyPlanRequest):
@@ -230,6 +241,7 @@ class CoachingPlanResponse(ApiModel):
     generated_count: int
     rejected_count: int
     items: list[CoachingActivityResponse]
+    adaptation: AdaptationResponse | None = None
 
 
 class IntegrityIssueResponse(ApiModel):

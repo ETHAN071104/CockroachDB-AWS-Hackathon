@@ -1,4 +1,5 @@
 from backend.repositories.interfaces.protocols import (
+    AdaptationEventRepository,
     DashboardRepository,
     DocumentRepository,
     DocumentVectorRepository,
@@ -17,6 +18,7 @@ from backend.repositories.interfaces.protocols import (
 )
 
 __all__ = [
+    "AdaptationEventRepository",
     "DashboardRepository",
     "DocumentRepository",
     "DocumentVectorRepository",

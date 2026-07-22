@@ -48,10 +48,35 @@ class VectorOutboxJob:
 class LearningSignal:
     id: str
     workspace_id: str
-    signal_type: str
     source_type: str
     source_id: str
+    source_question_id: str | None
+    topic: str
+    signal_type: str
+    statement: str
+    evidence: tuple[dict[str, object], ...]
+    confidence: float
+    importance: float
+    occurrence_count: int
     payload: dict[str, object]
     status: str
+    first_observed_at: str
+    last_observed_at: str
     created_at: str
     updated_at: str
+    signal_key: str | None = None
+    memory_id: int | None = None
+    proposal_id: str | None = None
+
+
+@dataclass(frozen=True)
+class AdaptationEvent:
+    id: str
+    workspace_id: str
+    workflow_type: str
+    request_id: str
+    memory_ids: tuple[int, ...]
+    learning_signal_ids: tuple[str, ...]
+    applied_changes: dict[str, object]
+    reason: str
+    created_at: str

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from backend.rag.scope import RetrievalScope, ResolvedRetrievalScope, resolve_retrieval_scope
@@ -14,6 +14,7 @@ from backend.study.recommendations import (
     normalize_review_question,
 )
 from backend.study.scope_filter import source_matches_scope
+from backend.application.learning_loop import AdaptationContext, build_adaptation_context
 
 
 # ============================================================
@@ -79,6 +80,7 @@ class AdaptiveStudyPlan:
     completed_sessions_scanned: int
     interactions_scanned: int
     quiz_attempts_scanned: int
+    adaptation: AdaptationContext
 
     @property
     def item_count(self) -> int:
@@ -554,6 +556,25 @@ def build_adaptive_study_plan(
         + quiz_candidates
     )
 
+    adaptation = build_adaptation_context(
+        "study_plan",
+        " ".join(candidate.title for candidate in candidates),
+    )
+    if adaptation.adapted:
+        candidates = [
+            replace(
+                candidate,
+                priority_score=candidate.priority_score + 15,
+                desired_minutes=min(candidate.desired_minutes + 5, 30),
+                action=(
+                    candidate.action
+                    + " This item is prioritized because current learner memory "
+                    "or learning-signal evidence indicates a relevant gap."
+                ),
+            )
+            for candidate in candidates
+        ]
+
     candidates.sort(
         key=lambda candidate: (
             candidate.priority_score,
@@ -622,6 +643,7 @@ def build_adaptive_study_plan(
         quiz_attempts_scanned=(
             quiz_attempt_count
         ),
+        adaptation=adaptation,
     )
 
 

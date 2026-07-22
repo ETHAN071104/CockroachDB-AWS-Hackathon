@@ -7,6 +7,7 @@ from backend.repositories.sqlite.adapters import (
     SQLiteStudySessionRepository,
 )
 from backend.repositories.sqlite.foundation import (
+    SQLiteAdaptationEventRepository,
     SQLiteLearningSignalRepository,
     SQLiteVectorOutboxRepository,
     SQLiteWorkflowStateRepository,
@@ -16,6 +17,7 @@ from backend.repositories.sqlite.foundation import (
 from backend.repositories.sqlite.unit_of_work import SQLiteUnitOfWork
 
 __all__ = [
+    "SQLiteAdaptationEventRepository",
     "SQLiteDocumentRepository",
     "SQLiteIntelligenceRepository",
     "SQLiteLearnerMemoryRepository",

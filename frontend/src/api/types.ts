@@ -159,6 +159,12 @@ export interface MemoryProposal {
   allowed_decisions: MemoryDecision[];
   reason: string;
   created_at: string;
+  evidence?: Array<Record<string, unknown>>;
+  learning_signal_ids?: string[];
+  source_type?: string | null;
+  source_id?: string | null;
+  occurrence_count?: number;
+  signal_status?: string | null;
 }
 
 type NoRetrievalScope = {
@@ -231,6 +237,16 @@ export interface MemoryRecord {
   status: MemoryStatus;
   created_at: string;
   updated_at: string;
+  evidence?: Array<Record<string, unknown>>;
+  source_quiz_id?: string | null;
+  occurrence_count?: number;
+  improvement_state?: string | null;
+  latest_use?: {
+    workflow_type: string;
+    request_id: string;
+    reason: string;
+    created_at: string;
+  } | null;
 }
 
 export interface MemoryList {
@@ -255,6 +271,7 @@ export interface MemorySearchResult {
 export interface MemoryProposalDecisionRequest {
   decision: MemoryDecision;
   replace_memory_id?: number | null;
+  edited_content?: string | null;
 }
 
 export interface MemoryProposalDecisionResult {
@@ -294,12 +311,56 @@ export interface PresentedQuizQuestion {
   options: [string, string, string, string] | string[];
 }
 
+export interface AdaptationInfo {
+  adapted_using_learner_memory: boolean;
+  targeted_topic: string | null;
+  difficulty: string | null;
+  reason: string;
+  memory_ids: number[];
+  learning_signal_ids: string[];
+  applied_changes: Record<string, unknown>;
+  event_id: string | null;
+}
+
+export interface LearningSignal {
+  id: string;
+  source_type: string;
+  source_id: string;
+  source_question_id: string | null;
+  topic: string;
+  signal_type: string;
+  statement: string;
+  evidence: Array<Record<string, unknown>>;
+  confidence: number;
+  importance: number;
+  occurrence_count: number;
+  status: string;
+  first_observed_at: string;
+  last_observed_at: string;
+  memory_id: number | null;
+  proposal_id: string | null;
+}
+
+export interface QuizMemoryProposal {
+  proposal_id: string;
+  memory_type: string;
+  content: string;
+  confidence: number;
+  importance: number;
+  allowed_decisions: string[];
+  reason: string;
+  evidence: Array<Record<string, unknown>>;
+  occurrence_count: number;
+  created_at: string;
+}
+
 export interface PresentedQuiz {
   quiz_id: string;
   requested_topic: string;
   topic: string;
   confidence: number;
   questions: PresentedQuizQuestion[];
+  adaptation?: AdaptationInfo | null;
 }
 
 export interface QuizAnswer {
@@ -329,6 +390,10 @@ export interface QuizSubmission {
   score_percentage: number;
   accuracy_percentage: number | null;
   feedback: QuizQuestionFeedback[];
+  learning_signals?: LearningSignal[];
+  detected_weaknesses?: string[];
+  memory_proposals?: QuizMemoryProposal[];
+  enrichment_workflow_id?: string | null;
 }
 
 export interface OutcomeCounts {
@@ -466,6 +531,9 @@ export interface ReviewRecommendation {
   source_document_ids: number[];
   created_at: string;
   reason: string;
+  memory_ids?: number[];
+  learning_signal_ids?: string[];
+  adaptation_reason?: string | null;
 }
 
 export interface ReviewQueue {
@@ -473,6 +541,7 @@ export interface ReviewQueue {
   total: number;
   completed_session_count: number;
   scanned_interaction_count: number;
+  adaptation?: AdaptationInfo | null;
 }
 
 export interface ReviewAction {
@@ -488,6 +557,7 @@ export interface ReviewAction {
   confidence: number;
   reason: string;
   sources: SourceLineage[];
+  adaptation?: AdaptationInfo | null;
 }
 
 export interface StudyPlanRequest {
@@ -525,6 +595,7 @@ export interface StudyPlan {
   interactions_scanned: number;
   quiz_attempts_scanned: number;
   items: StudyPlanItem[];
+  adaptation?: AdaptationInfo | null;
 }
 
 export interface CoachingActivity {
@@ -549,6 +620,7 @@ export interface CoachingPlan {
   generated_count: number;
   rejected_count: number;
   items: CoachingActivity[];
+  adaptation?: AdaptationInfo | null;
 }
 
 export interface IntegrityIssue {

@@ -4,7 +4,13 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import Any, Protocol
 
-from backend.domain import LearningSignal, VectorOutboxJob, WorkflowState, Workspace
+from backend.domain import (
+    AdaptationEvent,
+    LearningSignal,
+    VectorOutboxJob,
+    WorkflowState,
+    Workspace,
+)
 
 
 class RepositoryConflictError(RuntimeError):
@@ -154,9 +160,63 @@ class LearningSignalRepository(Protocol):
         source_id: str,
         payload: dict[str, object],
         status: str = "pending",
+        *,
+        source_question_id: str | None = None,
+        topic: str = "",
+        statement: str = "",
+        evidence: tuple[dict[str, object], ...] = (),
+        confidence: float = 0.5,
+        importance: float = 0.5,
+        occurrence_count: int = 1,
+        first_observed_at: str | None = None,
+        last_observed_at: str | None = None,
+        signal_key: str | None = None,
+        memory_id: int | None = None,
+        proposal_id: str | None = None,
     ) -> LearningSignal: ...
 
-    def list(self, status: str | None = None) -> list[LearningSignal]: ...
+    def get(self, signal_id: str) -> LearningSignal | None: ...
+
+    def find_by_key(self, signal_key: str) -> LearningSignal | None: ...
+
+    def update(self, signal_id: str, **values: Any) -> LearningSignal: ...
+
+    def list(
+        self,
+        status: str | None = None,
+        *,
+        topic: str | None = None,
+        signal_types: tuple[str, ...] | None = None,
+    ) -> list[LearningSignal]: ...
+
+    def link_memory(
+        self,
+        signal_ids: tuple[str, ...],
+        memory_id: int,
+        proposal_id: str | None = None,
+    ) -> None: ...
+
+
+class AdaptationEventRepository(Protocol):
+    workspace_id: str
+
+    def create(
+        self,
+        workflow_type: str,
+        request_id: str,
+        memory_ids: tuple[int, ...],
+        learning_signal_ids: tuple[str, ...],
+        applied_changes: dict[str, object],
+        reason: str,
+    ) -> AdaptationEvent: ...
+
+    def get(self, event_id: str) -> AdaptationEvent | None: ...
+
+    def list(
+        self,
+        workflow_type: str | None = None,
+        limit: int | None = None,
+    ) -> list[AdaptationEvent]: ...
 
 
 class WorkflowStateRepository(Protocol):
@@ -185,6 +245,16 @@ class WorkflowStateRepository(Protocol):
         status: str,
         metadata: dict[str, object] | None = None,
     ) -> WorkflowState: ...
+
+    def replace_payload(
+        self,
+        workflow_id: str,
+        expected_version: int,
+        payload: dict[str, object],
+        expires_at: str,
+    ) -> WorkflowState: ...
+
+    def list_pending(self, workflow_type: str) -> list[WorkflowState]: ...
 
     def count_pending(self, workflow_type: str) -> int: ...
 

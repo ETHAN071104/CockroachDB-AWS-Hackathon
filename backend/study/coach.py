@@ -24,6 +24,7 @@ from backend.study.planner import (
     AdaptiveStudyPlan,
     StudyPlanItem,
 )
+from backend.application.learning_loop import AdaptationContext, build_adaptation_context
 
 
 # ============================================================
@@ -105,6 +106,7 @@ class GeneratedCoachingItem:
 class GeneratedCoachingPlan:
     study_plan: AdaptiveStudyPlan
     items: tuple[GeneratedCoachingItem, ...]
+    adaptation: AdaptationContext
 
     @property
     def generated_count(self) -> int:
@@ -215,6 +217,10 @@ Deterministic recommended action:
 Evidence:
 
 {evidence_context}
+
+Learner-specific adaptation instructions:
+
+{adaptation_instructions}
 
 Document excerpts:
 
@@ -482,6 +488,7 @@ def generate_coaching_item(
     *,
     scope: RetrievalScope | None = None,
     topic_source_repository: TopicSourceRepository | None = None,
+    adaptation_instructions: str = "No learner-specific adaptation is available.",
 ) -> GeneratedCoachingItem:
     sources = retrieve_coaching_sources(
         plan_item,
@@ -514,6 +521,7 @@ def generate_coaching_item(
         evidence_context=format_evidence_context(
             plan_item
         ),
+        adaptation_instructions=adaptation_instructions,
         document_context=format_document_context(
             sources
         ),
@@ -566,11 +574,16 @@ def generate_coaching_plan(
 
     No database records are created or modified.
     """
+    adaptation = build_adaptation_context(
+        "coaching",
+        " ".join(item.title for item in study_plan.items),
+    )
     generated_items = tuple(
         generate_coaching_item(
             plan_item,
             scope=scope,
             topic_source_repository=topic_source_repository,
+            adaptation_instructions=adaptation.prompt_instructions,
         )
         for plan_item in study_plan.items
     )
@@ -578,6 +591,7 @@ def generate_coaching_plan(
     return GeneratedCoachingPlan(
         study_plan=study_plan,
         items=generated_items,
+        adaptation=adaptation,
     )
 
 

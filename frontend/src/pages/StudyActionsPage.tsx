@@ -180,6 +180,11 @@ function ReviewWorkspace({ scope }: { scope?: RetrievalScope }) {
       {queue.error ? (
         <ErrorState message={errorMessage(queue.error)} onRetry={() => void queue.reload()} />
       ) : null}
+      {queue.data?.adaptation?.adapted_using_learner_memory ? (
+        <Notice tone="info">
+          Review order adapted using learner memory or learning signals. {queue.data.adaptation.reason}
+        </Notice>
+      ) : null}
       {queue.data?.items.length ? (
         <div className="review-grid">
           {queue.data.items.map((item) => (
@@ -215,6 +220,9 @@ function ReviewWorkspace({ scope }: { scope?: RetrievalScope }) {
             {result.should_generate ? result.review_mode : 'Not generated'}
           </Badge>
           <h2>{result.topic || 'Review activity'}</h2>
+          {result.adaptation?.adapted_using_learner_memory ? (
+            <Notice tone="info">Why this review changed: {result.adaptation.reason}</Notice>
+          ) : null}
           {result.should_generate ? (
             <>
               <h3>Explanation</h3>
@@ -254,6 +262,8 @@ function QuizWorkspace({
   const [quiz, setQuiz] = useState<PresentedQuiz | null>(null);
   const [answers, setAnswers] = useState<QuizAnswer[]>([]);
   const [submission, setSubmission] = useState<QuizSubmission | null>(null);
+  const [proposalDrafts, setProposalDrafts] = useState<Record<string, string>>({});
+  const [decidedProposals, setDecidedProposals] = useState<Record<string, string>>({});
   const generate = useAsyncAction((
     requestedTopic: string,
     count: number,
@@ -277,6 +287,21 @@ function QuizWorkspace({
     apiClient.post<QuizSubmission, { responses: QuizAnswer[] }>(
       `/api/study/actions/quizzes/${encodeURIComponent(quizId)}/submit`,
       { responses },
+      { signal },
+    ),
+  );
+  const decideProposal = useAsyncAction((
+    proposalId: string,
+    decision: 'accept' | 'reject',
+    editedContent: string | null,
+    signal: AbortSignal,
+  ) =>
+    apiClient.post<{ consumed: boolean }>(
+      `/api/memories/proposals/${encodeURIComponent(proposalId)}/decision`,
+      {
+        decision,
+        edited_content: decision === 'accept' ? editedContent : null,
+      },
       { signal },
     ),
   );
@@ -318,12 +343,34 @@ function QuizWorkspace({
     }
   }
 
+  async function handleProposalDecision(
+    proposalId: string,
+    decision: 'accept' | 'reject',
+    originalContent: string,
+  ) {
+    try {
+      const draft = proposalDrafts[proposalId] ?? originalContent;
+      await decideProposal.run(
+        proposalId,
+        decision,
+        draft === originalContent ? null : draft,
+      );
+      setDecidedProposals((current) => ({ ...current, [proposalId]: decision }));
+      apiClient.invalidate({ prefix: '/api/memories' });
+    } catch {
+      // The durable proposal remains available for retry.
+    }
+  }
+
   function resetQuiz() {
     setQuiz(null);
     setAnswers([]);
     setSubmission(null);
     generate.reset();
     submit.reset();
+    decideProposal.reset();
+    setProposalDrafts({});
+    setDecidedProposals({});
   }
 
   if (submission) {
@@ -353,6 +400,91 @@ function QuizWorkspace({
             <p className="metric-value metric-value--compact">{submission.status}</p>
           </Card>
         </div>
+        {submission.detected_weaknesses?.length ? (
+          <Card tone="accent">
+            <h2>Detected weaknesses</h2>
+            <ul>
+              {submission.detected_weaknesses.map((weakness) => (
+                <li key={weakness}>{weakness}</li>
+              ))}
+            </ul>
+          </Card>
+        ) : null}
+        {submission.learning_signals?.length ? (
+          <div className="page-stack">
+            <SectionHeader title="Learning signals" description="Trusted quiz outcomes, kept separate from confirmed memory." />
+            {submission.learning_signals.map((signal) => (
+              <Card key={signal.id}>
+                <div className="quiz-feedback__header">
+                  <Badge tone={signal.status === 'resolved' ? 'success' : 'warning'}>
+                    {signal.signal_type.replaceAll('_', ' ')}
+                  </Badge>
+                  <span>{signal.occurrence_count} observation(s)</span>
+                </div>
+                <h3>{signal.topic}</h3>
+                <p>{signal.statement}</p>
+                <ProgressBar label="Confidence" value={signal.confidence} max={1} />
+                <details>
+                  <summary>Supporting evidence</summary>
+                  <ul>
+                    {signal.evidence.map((evidence, index) => (
+                      <li key={`${signal.id}-${index}`}>
+                        {String(evidence.question ?? 'Quiz question')} — {String(evidence.outcome ?? 'observed')}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </Card>
+            ))}
+          </div>
+        ) : null}
+        {submission.memory_proposals?.length ? (
+          <div className="page-stack">
+            <SectionHeader title="Memory proposals" description="Review, edit, accept, or reject before anything becomes active learner memory." />
+            {submission.memory_proposals.map((proposal) => {
+              const decision = decidedProposals[proposal.proposal_id];
+              return (
+                <Card key={proposal.proposal_id} tone="accent">
+                  <Badge tone={decision ? 'success' : 'info'}>
+                    {decision ? `${decision}ed` : 'Approval required'}
+                  </Badge>
+                  <p>{proposal.reason}</p>
+                  <label>
+                    Proposed memory
+                    <textarea
+                      value={proposalDrafts[proposal.proposal_id] ?? proposal.content}
+                      onChange={(event) => setProposalDrafts((current) => ({
+                        ...current,
+                        [proposal.proposal_id]: event.target.value,
+                      }))}
+                      disabled={Boolean(decision)}
+                      rows={3}
+                    />
+                  </label>
+                  <ProgressBar label="Confidence" value={proposal.confidence} max={1} />
+                  {!decision ? (
+                    <div className="card-actions">
+                      <Button
+                        onClick={() => void handleProposalDecision(proposal.proposal_id, 'accept', proposal.content)}
+                        loading={decideProposal.isPending}
+                      >
+                        Accept{proposalDrafts[proposal.proposal_id] && proposalDrafts[proposal.proposal_id] !== proposal.content ? ' edited memory' : ''}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => void handleProposalDecision(proposal.proposal_id, 'reject', proposal.content)}
+                        disabled={decideProposal.isPending}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  ) : null}
+                </Card>
+              );
+            })}
+            {decideProposal.error ? <Notice tone="error">{errorMessage(decideProposal.error)} The proposal remains available.</Notice> : null}
+          </div>
+        ) : null}
         <div className="page-stack">
           {submission.feedback.map((feedback) => (
             <Card key={feedback.question_number} className="quiz-feedback">
@@ -392,6 +524,11 @@ function QuizWorkspace({
           description={`${answers.length} of ${quiz.questions.length} questions presented.`}
           actions={<Button variant="ghost" onClick={resetQuiz}>Cancel quiz</Button>}
         />
+        {quiz.adaptation?.adapted_using_learner_memory ? (
+          <Notice tone="info">
+            Adapted using learner memory. Target: {quiz.adaptation.targeted_topic ?? quiz.topic}; difficulty: {quiz.adaptation.difficulty ?? 'standard'}. {quiz.adaptation.reason}
+          </Notice>
+        ) : null}
         <ProgressBar value={answers.length} max={quiz.questions.length} label="Quiz progress" />
         {currentQuestion ? (
           <Card className="quiz-question">
@@ -574,6 +711,11 @@ function CoachingWorkspace({ scope }: { scope?: RetrievalScope }) {
       {coaching ? (
         coaching.items.length ? (
           <div className="page-stack">
+            {coaching.adaptation ? (
+              <Notice tone="info">
+                <strong>Why this was recommended:</strong> {coaching.adaptation.reason} What changed: {Object.keys(coaching.adaptation.applied_changes).join(', ') || 'no learner-specific change'}.
+              </Notice>
+            ) : null}
             {coaching.items.map((item) => (
               <Card key={`${item.plan_item.rank}-${item.plan_item.title}`} className="reading-card">
                 <Badge tone={item.should_generate ? 'success' : 'warning'}>
@@ -674,6 +816,11 @@ function PlanResult({ plan }: { plan: StudyPlan }) {
   }
   return (
     <div className="page-stack">
+      {plan.adaptation ? (
+        <Notice tone="info">
+          <strong>Why this was recommended:</strong> {plan.adaptation.reason} Memory or signal used: {[...plan.adaptation.memory_ids.map(String), ...plan.adaptation.learning_signal_ids].join(', ') || 'none'}. What changed: {Object.keys(plan.adaptation.applied_changes).join(', ') || 'none'}.
+        </Notice>
+      ) : null}
       <ProgressBar label="Time allocated" value={allocated} max={plan.requested_minutes} />
       <ol className="plan-list">
         {plan.items.map((item) => (

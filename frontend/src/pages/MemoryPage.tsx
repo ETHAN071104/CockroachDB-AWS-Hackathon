@@ -540,6 +540,30 @@ function MemoryCard({
         <ProgressBar label="Importance" value={memory.importance} max={1} />
       </div>
       <small>Updated {formatDateTime(memory.updated_at)}</small>
+      {memory.occurrence_count ? (
+        <small>
+          Evidence occurrences: {memory.occurrence_count}
+          {memory.improvement_state ? ` · State: ${memory.improvement_state}` : ''}
+          {memory.source_quiz_id ? ` · Source quiz: ${memory.source_quiz_id}` : ''}
+        </small>
+      ) : null}
+      {memory.evidence?.length ? (
+        <details>
+          <summary>Supporting evidence ({memory.evidence.length})</summary>
+          <ul>
+            {memory.evidence.map((evidence, index) => (
+              <li key={`${memory.id}-evidence-${index}`}>
+                {String(evidence.question ?? 'Recorded interaction')} — {String(evidence.outcome ?? 'observed')}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {memory.latest_use ? (
+        <small>
+          Latest use: {memory.latest_use.workflow_type} · {memory.latest_use.reason}
+        </small>
+      ) : null}
       <div className="card-actions">
         <Button variant="ghost" icon={<Pencil size={17} aria-hidden="true" />} onClick={onEdit}>
           Edit

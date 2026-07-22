@@ -12,6 +12,14 @@ from backend.study.quiz_runner import QuizQuestionAttempt, QuizRunResult
 from backend.application.dependencies import get_application_dependencies
 from backend.rag.rag_service import RetrievedSource
 from backend.study.quiz_generator import GroundedQuiz
+from backend.application.learning_loop import (
+    AdaptationContext,
+    analyze_quiz_outcomes,
+    build_adaptation_context,
+    record_adaptation_event,
+)
+from backend.domain import LearningSignal
+from backend.memory.proposals import PendingMemoryProposal
 
 
 MAX_PENDING_QUIZZES = 128
@@ -47,6 +55,8 @@ class PresentedQuiz:
     topic: str
     confidence: float
     questions: tuple[PresentedQuizQuestion, ...]
+    adaptation: AdaptationContext
+    adaptation_event_id: str
 
 
 @dataclass(frozen=True)
@@ -87,6 +97,10 @@ class QuizSubmissionResult:
     score_percentage: float
     accuracy_percentage: float | None
     feedback: tuple[QuizQuestionFeedback, ...]
+    learning_signals: tuple[LearningSignal, ...]
+    detected_weaknesses: tuple[str, ...]
+    memory_proposals: tuple[PendingMemoryProposal, ...]
+    enrichment_workflow_id: str | None
 
 
 _registry_lock = RLock()
@@ -111,10 +125,12 @@ def generate_quiz_for_api(
     question_count: int,
     scope: RetrievalScope | None = None,
 ) -> PresentedQuiz:
+    adaptation = build_adaptation_context("quiz", topic)
     generated = generate_grounded_quiz(
         topic,
         question_count,
         scope=scope,
+        adaptation_instructions=adaptation.prompt_instructions,
     )
     if not generated.quiz.should_generate:
         raise QuizGenerationRejectedError(generated.quiz.reason)
@@ -129,6 +145,10 @@ def generate_quiz_for_api(
             (datetime.now(timezone.utc) + PENDING_QUIZ_TTL).isoformat(),
         )
         repository.trim_pending(PENDING_QUIZ_WORKFLOW, MAX_PENDING_QUIZZES)
+    adaptation_event = record_adaptation_event(
+        adaptation,
+        request_id=quiz_id,
+    )
 
     questions = tuple(
         PresentedQuizQuestion(
@@ -149,6 +169,8 @@ def generate_quiz_for_api(
         topic=generated.quiz.topic,
         confidence=generated.quiz.confidence,
         questions=questions,
+        adaptation=adaptation,
+        adaptation_event_id=adaptation_event.id,
     )
 
 
@@ -215,8 +237,14 @@ def submit_quiz(
         generated = _deserialize_generated_quiz(state.payload)
         run_result = score_quiz(generated, responses)
         with dependencies.unit_of_work():
-            stored_attempt, _stored_questions = dependencies.quizzes.save_run_result(
+            stored_attempt, stored_questions = dependencies.quizzes.save_run_result(
                 run_result
+            )
+            learning = analyze_quiz_outcomes(
+                generated=generated,
+                run_result=run_result,
+                stored_attempt=stored_attempt,
+                stored_questions=stored_questions,
             )
             dependencies.workflows.decide(
                 state.id,
@@ -278,6 +306,10 @@ def submit_quiz(
         score_percentage=stored_attempt.score_percentage,
         accuracy_percentage=stored_attempt.accuracy_percentage,
         feedback=tuple(feedback),
+        learning_signals=learning.signals,
+        detected_weaknesses=learning.weaknesses,
+        memory_proposals=learning.proposals,
+        enrichment_workflow_id=learning.enrichment_workflow_id,
     )
 
 

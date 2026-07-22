@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from backend.api.errors import ApiError
 from backend.api.schemas import (
+    AdaptationResponse,
+    LearningSignalResponse,
     PresentedQuizQuestionResponse,
     PresentedQuizResponse,
     QuizGenerateRequest,
     QuizQuestionFeedbackResponse,
+    QuizMemoryProposalResponse,
     QuizSubmissionResponse,
     QuizSubmitRequest,
     SourceLineageResponse,
@@ -100,6 +103,24 @@ def generate_quiz(payload: QuizGenerateRequest) -> PresentedQuizResponse:
             )
             for question in quiz.questions
         ],
+        adaptation=AdaptationResponse(
+            adapted_using_learner_memory=quiz.adaptation.adapted,
+            targeted_topic=(
+                str(quiz.adaptation.applied_changes.get("targeted_topic"))
+                if quiz.adaptation.applied_changes.get("targeted_topic") is not None
+                else None
+            ),
+            difficulty=(
+                str(quiz.adaptation.applied_changes.get("difficulty"))
+                if quiz.adaptation.applied_changes.get("difficulty") is not None
+                else None
+            ),
+            reason=quiz.adaptation.reason,
+            memory_ids=list(quiz.adaptation.memory_ids),
+            learning_signal_ids=list(quiz.adaptation.learning_signal_ids),
+            applied_changes=quiz.adaptation.applied_changes,
+            event_id=quiz.adaptation_event_id,
+        ),
     )
 
 
@@ -175,4 +196,42 @@ def submit_quiz_route(
             )
             for item in result.feedback
         ],
+        learning_signals=[
+            LearningSignalResponse(
+                id=signal.id,
+                source_type=signal.source_type,
+                source_id=signal.source_id,
+                source_question_id=signal.source_question_id,
+                topic=signal.topic,
+                signal_type=signal.signal_type,
+                statement=signal.statement,
+                evidence=list(signal.evidence),
+                confidence=signal.confidence,
+                importance=signal.importance,
+                occurrence_count=signal.occurrence_count,
+                status=signal.status,
+                first_observed_at=signal.first_observed_at,
+                last_observed_at=signal.last_observed_at,
+                memory_id=signal.memory_id,
+                proposal_id=signal.proposal_id,
+            )
+            for signal in result.learning_signals
+        ],
+        detected_weaknesses=list(result.detected_weaknesses),
+        memory_proposals=[
+            QuizMemoryProposalResponse(
+                proposal_id=proposal.id,
+                memory_type=proposal.candidate.memory_type,
+                content=proposal.candidate.content,
+                confidence=proposal.candidate.confidence,
+                importance=proposal.candidate.importance,
+                allowed_decisions=list(proposal.allowed_decisions),
+                reason=proposal.conflict.reason,
+                evidence=list(proposal.evidence),
+                occurrence_count=proposal.occurrence_count,
+                created_at=proposal.created_at,
+            )
+            for proposal in result.memory_proposals
+        ],
+        enrichment_workflow_id=result.enrichment_workflow_id,
     )

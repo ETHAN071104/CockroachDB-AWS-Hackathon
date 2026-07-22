@@ -5,7 +5,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from threading import RLock
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from backend.memory.conflict_detector import (
     MemoryConflictResult,
@@ -50,6 +50,12 @@ class PendingMemoryProposal:
     candidate: MemoryCandidate
     conflict: MemoryConflictResult
     created_at: str
+    evidence: tuple[dict[str, object], ...] = ()
+    learning_signal_ids: tuple[str, ...] = ()
+    source_type: str | None = None
+    source_id: str | None = None
+    occurrence_count: int = 1
+    signal_status: str | None = None
 
     @property
     def existing_memory_id(self) -> int | None:
@@ -141,6 +147,89 @@ def create_memory_proposal(
     return pending
 
 
+def create_or_update_signal_memory_proposal(
+    signal,
+) -> PendingMemoryProposal | None:
+    """Create one stable, evidence-backed proposal for a learning signal.
+
+    Quiz evidence is already trusted and deterministic, so this path never
+    invokes an LLM, an embedding model, or vector search.
+    """
+    if signal.status == "resolved" or signal.memory_id is not None:
+        return None
+    signal_key = signal.signal_key or signal.id
+    proposal_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            f"agentbook:{signal.workspace_id}:learning-signal:{signal_key}",
+        )
+    )
+    candidate = MemoryCandidate(
+        should_store=True,
+        memory_type="learning_state",
+        content=signal.statement,
+        confidence=signal.confidence,
+        importance=signal.importance,
+        reason=(
+            f"Based on {signal.occurrence_count} trusted quiz observation"
+            + ("s." if signal.occurrence_count != 1 else ".")
+        ),
+    )
+    pending = PendingMemoryProposal(
+        id=proposal_id,
+        candidate=candidate,
+        conflict=MemoryConflictResult(
+            conflict_type="new",
+            existing_memory=None,
+            confidence=1.0,
+            reason=(
+                "This probable learning state is supported by quiz evidence "
+                "and requires learner approval before becoming active memory."
+            ),
+        ),
+        created_at=signal.first_observed_at,
+        evidence=signal.evidence,
+        learning_signal_ids=(signal.id,),
+        source_type=signal.source_type,
+        source_id=signal.source_id,
+        occurrence_count=signal.occurrence_count,
+        signal_status=signal.status,
+    )
+    with _proposal_lock:
+        repository = _workflow_repository()
+        current = repository.get(
+            proposal_id,
+            MEMORY_PROPOSAL_WORKFLOW,
+            include_terminal=True,
+        )
+        expires_at = (datetime.now(timezone.utc) + MEMORY_PROPOSAL_TTL).isoformat()
+        if current is None:
+            repository.put(
+                proposal_id,
+                MEMORY_PROPOSAL_WORKFLOW,
+                _serialize_pending_proposal(pending),
+                expires_at,
+            )
+        elif current.status == "pending":
+            repository.replace_payload(
+                proposal_id,
+                current.version,
+                _serialize_pending_proposal(pending),
+                expires_at,
+            )
+        else:
+            return None
+        repository.trim_pending(
+            MEMORY_PROPOSAL_WORKFLOW,
+            MAX_PENDING_MEMORY_PROPOSALS,
+        )
+    get_application_dependencies().learning_signals.update(
+        signal.id,
+        proposal_id=proposal_id,
+    )
+    return pending
+
+
 def get_memory_proposal(
     proposal_id: str,
 ) -> PendingMemoryProposal | None:
@@ -159,6 +248,7 @@ def decide_memory_proposal(
     decision: MemoryProposalDecision,
     *,
     replace_memory_id: int | None = None,
+    edited_content: str | None = None,
 ) -> MemoryProposalDecisionResult:
     """Apply a decision using only the registry-held candidate."""
     normalized_id = _normalize_proposal_id(proposal_id)
@@ -218,6 +308,23 @@ def decide_memory_proposal(
             )
 
         candidate = pending.candidate
+        if edited_content is not None:
+            if decision not in {"accept", "replace", "keep_both"}:
+                raise MemoryProposalDecisionError(
+                    "Edited content is only valid when saving a proposal."
+                )
+            candidate = candidate.model_copy(
+                update={"content": edited_content.strip()}
+            )
+            if pending.learning_signal_ids:
+                if len(candidate.content) < 12:
+                    raise MemoryProposalDecisionError(
+                        "The edited learning-state memory is too short."
+                    )
+            else:
+                validation = validate_memory_candidate(candidate)
+                if not validation.accepted:
+                    raise MemoryProposalDecisionError(validation.reason)
 
         if candidate.memory_type == "none":
             raise MemoryProposalDecisionError(
@@ -279,6 +386,12 @@ def decide_memory_proposal(
                 "completed",
                 {"decision": decision},
             )
+            if result.saved_memory is not None and pending.learning_signal_ids:
+                dependencies.learning_signals.link_memory(
+                    pending.learning_signal_ids,
+                    result.saved_memory.id,
+                    pending.id,
+                )
 
         return result
 
@@ -345,6 +458,12 @@ def _serialize_pending_proposal(pending: PendingMemoryProposal) -> dict[str, obj
             "reason": pending.conflict.reason,
         },
         "created_at": pending.created_at,
+        "evidence": list(pending.evidence),
+        "learning_signal_ids": list(pending.learning_signal_ids),
+        "source_type": pending.source_type,
+        "source_id": pending.source_id,
+        "occurrence_count": pending.occurrence_count,
+        "signal_status": pending.signal_status,
     }
 
 
@@ -376,4 +495,29 @@ def _deserialize_pending_proposal(payload: dict[str, object]) -> PendingMemoryPr
             reason=str(raw_conflict.get("reason", "")),
         ),
         created_at=raw_created_at,
+        evidence=tuple(
+            item
+            for item in payload.get("evidence", [])
+            if isinstance(item, dict)
+        ),
+        learning_signal_ids=tuple(
+            str(item)
+            for item in payload.get("learning_signal_ids", [])
+        ),
+        source_type=(
+            str(payload["source_type"])
+            if payload.get("source_type") is not None
+            else None
+        ),
+        source_id=(
+            str(payload["source_id"])
+            if payload.get("source_id") is not None
+            else None
+        ),
+        occurrence_count=int(payload.get("occurrence_count", 1)),
+        signal_status=(
+            str(payload["signal_status"])
+            if payload.get("signal_status") is not None
+            else None
+        ),
     )

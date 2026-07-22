@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from backend.application.learning_loop import AdaptationContext, build_adaptation_context
 
 from backend.application.dependencies import get_application_dependencies
 from backend.rag.scope import RetrievalScope, ResolvedRetrievalScope, resolve_retrieval_scope
@@ -35,6 +37,9 @@ class ReviewRecommendation:
     reason: str
     source_document_ids: tuple[int, ...] = ()
     source_pairs: tuple[tuple[int, int], ...] = ()
+    memory_ids: tuple[int, ...] = ()
+    learning_signal_ids: tuple[str, ...] = ()
+    adaptation_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,7 @@ class StudyReviewQueue:
 
     completed_session_count: int
     scanned_interaction_count: int
+    adaptation: AdaptationContext
 
     @property
     def recommendation_count(self) -> int:
@@ -373,6 +379,31 @@ def build_review_queue(
         reverse=True,
     )
 
+    adaptation = build_adaptation_context(
+        "review",
+        " ".join(item.question for item in recommendations),
+    )
+    if adaptation.adapted:
+        recommendations = [
+            replace(
+                item,
+                priority_score=item.priority_score + 1,
+                reason=item.reason + " " + adaptation.reason,
+                memory_ids=adaptation.memory_ids,
+                learning_signal_ids=adaptation.learning_signal_ids,
+                adaptation_reason=adaptation.reason,
+            )
+            for item in recommendations
+        ]
+        recommendations.sort(
+            key=lambda item: (
+                item.priority_score,
+                item.created_at,
+                item.interaction_id,
+            ),
+            reverse=True,
+        )
+
     return StudyReviewQueue(
         recommendations=tuple(
             recommendations[:max_items]
@@ -383,6 +414,7 @@ def build_review_queue(
         scanned_interaction_count=(
             scanned_interaction_count
         ),
+        adaptation=adaptation,
     )
 
 

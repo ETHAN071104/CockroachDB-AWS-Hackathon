@@ -21,6 +21,7 @@ from backend.rag.scope import (
     TopicSourceRepository,
 )
 from backend.study.recommendations import ReviewRecommendation
+from backend.application.learning_loop import AdaptationContext, build_adaptation_context
 
 
 # ============================================================
@@ -131,6 +132,7 @@ class GeneratedReviewAction:
     recommendation: ReviewRecommendation
     sources: tuple[RetrievedSource, ...]
     action: GroundedReviewAction
+    adaptation: AdaptationContext
 
 
 # ============================================================
@@ -212,6 +214,10 @@ Recorded outcome:
 Reason this item was recommended:
 
 {recommendation_reason}
+
+Learner-specific adaptation instructions:
+
+{adaptation_instructions}
 
 Document excerpts:
 
@@ -447,6 +453,7 @@ def generate_review_action(
             "outcome."
         )
 
+    adaptation = build_adaptation_context("review", recommendation.question)
     sources = retrieve_review_sources(
         recommendation,
         scope=scope,
@@ -472,6 +479,7 @@ def generate_review_action(
                     "from the interaction's recorded sources."
                 ),
             ),
+            adaptation=adaptation,
         )
 
     document_context = format_document_context(
@@ -482,6 +490,7 @@ def generate_review_action(
         question=recommendation.question,
         outcome=recommendation.outcome,
         recommendation_reason=recommendation.reason,
+        adaptation_instructions=adaptation.prompt_instructions,
         document_context=document_context,
     )
 
@@ -512,6 +521,7 @@ def generate_review_action(
         recommendation=recommendation,
         sources=sources,
         action=action,
+        adaptation=adaptation,
     )
 
     return GeneratedReviewAction(

@@ -214,12 +214,56 @@ class PresentedQuizQuestionResponse(ApiModel):
     options: list[str] = Field(min_length=4, max_length=4)
 
 
+class AdaptationResponse(ApiModel):
+    adapted_using_learner_memory: bool
+    targeted_topic: str | None = None
+    difficulty: str | None = None
+    reason: str
+    memory_ids: list[int] = Field(default_factory=list)
+    learning_signal_ids: list[str] = Field(default_factory=list)
+    applied_changes: dict[str, Any] = Field(default_factory=dict)
+    event_id: str | None = None
+
+
+class LearningSignalResponse(ApiModel):
+    id: str
+    source_type: str
+    source_id: str
+    source_question_id: str | None = None
+    topic: str
+    signal_type: str
+    statement: str
+    evidence: list[dict[str, Any]]
+    confidence: float = Field(ge=0, le=1)
+    importance: float = Field(ge=0, le=1)
+    occurrence_count: int = Field(ge=1)
+    status: str
+    first_observed_at: str
+    last_observed_at: str
+    memory_id: int | None = None
+    proposal_id: str | None = None
+
+
+class QuizMemoryProposalResponse(ApiModel):
+    proposal_id: str
+    memory_type: str
+    content: str
+    confidence: float = Field(ge=0, le=1)
+    importance: float = Field(ge=0, le=1)
+    allowed_decisions: list[str]
+    reason: str
+    evidence: list[dict[str, Any]]
+    occurrence_count: int = Field(ge=1)
+    created_at: str
+
+
 class PresentedQuizResponse(ApiModel):
     quiz_id: str
     requested_topic: str
     topic: str
     confidence: float = Field(ge=0, le=1)
     questions: list[PresentedQuizQuestionResponse]
+    adaptation: AdaptationResponse | None = None
 
 
 class QuizAnswerRequest(ApiModel):
@@ -253,6 +297,10 @@ class QuizSubmissionResponse(ApiModel):
     score_percentage: float
     accuracy_percentage: float | None
     feedback: list[QuizQuestionFeedbackResponse]
+    learning_signals: list[LearningSignalResponse] = Field(default_factory=list)
+    detected_weaknesses: list[str] = Field(default_factory=list)
+    memory_proposals: list[QuizMemoryProposalResponse] = Field(default_factory=list)
+    enrichment_workflow_id: str | None = None
 
 
 MemoryType = Literal[
@@ -322,6 +370,12 @@ class MemoryProposalResponse(ApiModel):
     allowed_decisions: list[MemoryDecision]
     reason: str
     created_at: str
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    learning_signal_ids: list[str] = Field(default_factory=list)
+    source_type: str | None = None
+    source_id: str | None = None
+    occurrence_count: int = Field(default=1, ge=1)
+    signal_status: str | None = None
 
 
 class ChatResponse(ApiModel):
@@ -400,6 +454,11 @@ class MemoryResponse(ApiModel):
     status: MemoryStatus
     created_at: str
     updated_at: str
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    source_quiz_id: str | None = None
+    occurrence_count: int = Field(default=0, ge=0)
+    improvement_state: str | None = None
+    latest_use: dict[str, Any] | None = None
 
 
 class MemoryListResponse(ApiModel):
@@ -424,6 +483,7 @@ class MemorySearchResponse(ApiModel):
 class MemoryProposalDecisionRequest(ApiModel):
     decision: MemoryDecision
     replace_memory_id: int | None = Field(default=None, ge=1)
+    edited_content: str | None = Field(default=None, min_length=12, max_length=500)
 
 
 class MemoryProposalDecisionResultResponse(ApiModel):

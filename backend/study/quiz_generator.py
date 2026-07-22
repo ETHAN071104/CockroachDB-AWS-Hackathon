@@ -214,6 +214,10 @@ Requested number of questions:
 
 {question_count}
 
+Learner-specific adaptation instructions:
+
+{adaptation_instructions}
+
 Document excerpts:
 
 {document_context}
@@ -400,6 +404,7 @@ def generate_grounded_quiz(
     *,
     scope: RetrievalScope | None = None,
     topic_source_repository: TopicSourceRepository | None = None,
+    adaptation_instructions: str = "No learner-specific adaptation is available.",
 ) -> GeneratedGroundedQuiz:
     """
     Generate a grounded multiple-choice quiz.
@@ -447,6 +452,7 @@ def generate_grounded_quiz(
     messages = QUIZ_PROMPT.format_messages(
         topic=cleaned_topic,
         question_count=question_count,
+        adaptation_instructions=adaptation_instructions,
         document_context=document_context,
     )
 

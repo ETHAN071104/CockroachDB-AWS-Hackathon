@@ -9,6 +9,7 @@ from backend.repositories.chroma import (
     ChromaMemoryVectorRepository,
 )
 from backend.repositories.interfaces import (
+    AdaptationEventRepository,
     DashboardRepository,
     DocumentRepository,
     DocumentVectorRepository,
@@ -25,6 +26,7 @@ from backend.repositories.interfaces import (
     WorkspaceRepository,
 )
 from backend.repositories.sqlite import (
+    SQLiteAdaptationEventRepository,
     SQLiteDocumentRepository,
     SQLiteIntelligenceRepository,
     SQLiteLearnerMemoryRepository,
@@ -53,6 +55,7 @@ class ApplicationDependencies:
     quizzes: QuizRepository
     memories: LearnerMemoryRepository
     learning_signals: LearningSignalRepository
+    adaptation_events: AdaptationEventRepository
     workflows: WorkflowStateRepository
     document_vectors: DocumentVectorRepository
     memory_vectors: MemoryVectorRepository
@@ -88,6 +91,7 @@ def build_application_dependencies(
         quizzes=SQLiteQuizRepository(workspace_id),
         memories=SQLiteLearnerMemoryRepository(workspace_id),
         learning_signals=SQLiteLearningSignalRepository(workspace_id),
+        adaptation_events=SQLiteAdaptationEventRepository(workspace_id),
         workflows=SQLiteWorkflowStateRepository(workspace_id),
         document_vectors=ChromaDocumentVectorRepository(
             document_vector_store.get_vector_store
