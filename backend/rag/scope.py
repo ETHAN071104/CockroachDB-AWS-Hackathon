@@ -363,20 +363,12 @@ def _validate_positive_id(
 def _load_topic_source_pairs(
     topic_id: str,
 ) -> Iterable[object] | None:
-    try:
-        from backend.rag.intelligence_store import (
-            get_topic,
-            get_topic_source_pairs,
-        )
-    except ImportError as error:
-        raise RuntimeError(
-            "Topic-scoped retrieval is not available."
-        ) from error
+    from backend.application.dependencies import get_application_dependencies
 
-    if get_topic(topic_id) is None:
+    topic = get_application_dependencies().intelligence.get_topic(topic_id)
+    if topic is None:
         return None
-
-    return get_topic_source_pairs(topic_id)
+    return topic.sources
 
 
 def _normalize_topic_id(value: object) -> str:

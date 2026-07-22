@@ -4,7 +4,6 @@ import hashlib
 from io import BytesIO
 import logging
 from pathlib import Path
-import sqlite3
 import unicodedata
 from zipfile import BadZipFile, ZipFile
 
@@ -16,23 +15,17 @@ from backend.rag.config import (
     CHUNK_SIZE,
     MAX_UPLOAD_BYTES,
 )
-from backend.rag.database import (
-    delete_document_record_if_exists,
-    find_document_by_hash,
-    get_document_file_data,
-    insert_document,
-    update_chunk_count,
-)
+from backend.application.dependencies import get_application_dependencies
+from backend.application.vector_outbox import VectorOutboxService
 from backend.rag.loaders import (
     SUPPORTED_EXTENSIONS,
     get_mime_type,
     load_documents_from_bytes,
     validate_file_path,
 )
-from backend.rag.vector_store import (
-    delete_document_vectors,
-    get_vector_store,
-)
+from backend.rag.vector_store import get_vector_store
+from backend.repositories.chroma import ChromaDocumentVectorRepository
+from backend.repositories.interfaces import RepositoryConflictError
 
 
 _WINDOWS_RESERVED_FILENAMES = {
@@ -201,6 +194,7 @@ def prepare_chunks(
     document_id: int,
     filename: str,
     mime_type: str | None = None,
+    workspace_id: str | None = None,
 ) -> list[Document]:
     splitter = create_text_splitter()
     split_chunks = splitter.split_documents(documents)
@@ -246,6 +240,9 @@ def prepare_chunks(
                 "chunk_index": len(prepared_chunks),
             }
         )
+
+        if workspace_id is not None:
+            metadata["workspace_id"] = workspace_id
 
         if (
             isinstance(raw_slide, int)
@@ -352,7 +349,8 @@ def index_file_bytes(
 
     file_hash = calculate_sha256(file_data)
 
-    existing_document = find_document_by_hash(file_hash)
+    dependencies = get_application_dependencies()
+    existing_document = dependencies.documents.find_by_hash(file_hash)
 
     if existing_document is not None:
         return {
@@ -367,22 +365,68 @@ def index_file_bytes(
         Path(safe_filename)
     )
 
+    # Parsing is intentionally outside the write transaction. Provider and
+    # document-loader work must not hold a SQLite write lock.
+    loaded_documents = load_documents_from_bytes(
+        filename=safe_filename,
+        file_data=file_data,
+    )
+    if not loaded_documents:
+        raise ValueError("No readable content was extracted from the file.")
+
     try:
-        document_id = insert_document(
-            filename=safe_filename,
-            mime_type=mime_type,
-            file_hash=file_hash,
-            file_data=file_data,
-        )
-
-    except sqlite3.IntegrityError:
-        concurrent_document = find_document_by_hash(
-            file_hash
-        )
-
+        with dependencies.unit_of_work() as unit_of_work:
+            concurrent_document = dependencies.documents.find_by_hash(file_hash)
+            if concurrent_document is not None:
+                return {
+                    "status": "duplicate",
+                    "document_id": concurrent_document.id,
+                    "filename": concurrent_document.filename,
+                    "mime_type": concurrent_document.mime_type,
+                    "chunk_count": concurrent_document.chunk_count,
+                }
+            document_id = dependencies.documents.insert(
+                safe_filename,
+                mime_type,
+                file_hash,
+                file_data,
+            )
+            chunks = prepare_chunks(
+                documents=loaded_documents,
+                document_id=document_id,
+                filename=safe_filename,
+                mime_type=mime_type,
+                workspace_id=dependencies.workspace_id,
+            )
+            if not chunks:
+                raise ValueError("The document produced no usable text chunks.")
+            chunk_ids = create_chunk_ids(document_id, chunks)
+            dependencies.documents.update_chunk_count(document_id, len(chunks))
+            job = dependencies.vector_outbox.enqueue(
+                "document",
+                str(document_id),
+                "upsert",
+                {
+                    "chunks": [
+                        {
+                            "text": chunk.page_content,
+                            "metadata": dict(chunk.metadata),
+                        }
+                        for chunk in chunks
+                    ],
+                    "ids": chunk_ids,
+                },
+            )
+            outbox = VectorOutboxService(
+                dependencies.vector_outbox,
+                ChromaDocumentVectorRepository(get_vector_store),
+                dependencies.memory_vectors,
+            )
+            unit_of_work.after_commit(lambda: outbox.process(job.id))
+    except RepositoryConflictError:
+        concurrent_document = dependencies.documents.find_by_hash(file_hash)
         if concurrent_document is None:
             raise
-
         return {
             "status": "duplicate",
             "document_id": concurrent_document.id,
@@ -391,68 +435,11 @@ def index_file_bytes(
             "chunk_count": concurrent_document.chunk_count,
         }
 
-    try:
-        stored_filename, stored_file_data = (
-            get_document_file_data(document_id)
-        )
-
-        loaded_documents = load_documents_from_bytes(
-            filename=stored_filename,
-            file_data=stored_file_data,
-        )
-
-        if not loaded_documents:
-            raise ValueError(
-                "No readable content was extracted from the file."
-            )
-
-        chunks = prepare_chunks(
-            documents=loaded_documents,
-            document_id=document_id,
-            filename=stored_filename,
-            mime_type=mime_type,
-        )
-
-        if not chunks:
-            raise ValueError(
-                "The document produced no usable text chunks."
-            )
-
-        chunk_ids = create_chunk_ids(
-            document_id=document_id,
-            chunks=chunks,
-        )
-
-        vector_store = get_vector_store()
-
-        vector_store.add_documents(
-            documents=chunks,
-            ids=chunk_ids,
-        )
-
-        update_chunk_count(
-            document_id=document_id,
-            chunk_count=len(chunks),
-        )
-
-        return {
-            "status": "indexed",
-            "document_id": document_id,
-            "filename": stored_filename,
-            "mime_type": mime_type,
-            "pages": len(loaded_documents),
-            "chunk_count": len(chunks),
-        }
-
-    except Exception:
-        try:
-            delete_document_vectors(document_id)
-        except Exception as cleanup_error:
-            logger.warning(
-                "Failed to remove partial document vectors "
-                "during ingestion rollback (%s).",
-                type(cleanup_error).__name__,
-            )
-
-        delete_document_record_if_exists(document_id)
-        raise
+    return {
+        "status": "indexed",
+        "document_id": document_id,
+        "filename": safe_filename,
+        "mime_type": mime_type,
+        "pages": len(loaded_documents),
+        "chunk_count": len(chunks),
+    }

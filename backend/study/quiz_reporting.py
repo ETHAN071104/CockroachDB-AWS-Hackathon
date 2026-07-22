@@ -2,14 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from backend.application.dependencies import get_application_dependencies
 from backend.study.database import (
     StoredQuizAttempt,
     StoredQuizQuestionAttempt,
     StoredQuizQuestionSource,
-    get_quiz_attempt,
-    list_quiz_attempts,
-    list_quiz_question_attempts,
-    list_quiz_question_sources,
 )
 
 
@@ -215,26 +212,21 @@ class QuizPerformanceReport:
 def build_quiz_attempt_report(
     quiz_attempt_id: int,
 ) -> QuizAttemptReport:
-    attempt = get_quiz_attempt(
-        quiz_attempt_id
-    )
+    repository = get_application_dependencies().quizzes
+    attempt = repository.get_attempt(quiz_attempt_id)
 
     if attempt is None:
         raise ValueError(
             f"Quiz attempt ID {quiz_attempt_id} does not exist."
         )
 
-    stored_questions = list_quiz_question_attempts(
-        quiz_attempt_id
-    )
+    stored_questions = repository.list_questions(quiz_attempt_id)
 
     questions = tuple(
         QuizQuestionReport(
             question_attempt=question,
             sources=tuple(
-                list_quiz_question_sources(
-                    question.id
-                )
+                repository.list_sources(question.id)
             ),
         )
         for question in stored_questions
@@ -315,7 +307,7 @@ def build_quiz_performance_report(
             "Quiz-attempt limit must be greater than zero."
         )
 
-    attempts = list_quiz_attempts(
+    attempts = get_application_dependencies().quizzes.list_attempts(
         limit=attempt_limit
     )
 

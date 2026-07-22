@@ -17,6 +17,12 @@ from backend.api.routes.quiz import router as quiz_router
 from backend.api.routes.reports_study import router as reports_router
 from backend.api.routes.system import router as system_router
 from backend.api.schemas import HealthResponse
+from backend.application.dependencies import (
+    ApplicationDependencies,
+    configure_application_dependencies,
+    get_application_dependencies,
+    initialize_application_foundation,
+)
 from backend.memory.database import initialize_memory_database
 from backend.memory.vector_store import probe_memory_vector_store
 from backend.rag.database import initialize_database
@@ -28,6 +34,7 @@ def initialize_storage() -> dict[str, Any]:
     initialize_database()
     initialize_memory_database()
     initialize_study_database()
+    initialize_application_foundation()
     return {
         "document_vector_status": probe_vector_store(),
         "memory_vector_status": probe_memory_vector_store(),
@@ -46,12 +53,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-def create_app() -> FastAPI:
+def create_app(
+    dependencies: ApplicationDependencies | None = None,
+) -> FastAPI:
+    if dependencies is not None:
+        configure_application_dependencies(dependencies)
     application = FastAPI(
         title="Local Study Companion API",
         version=API_VERSION,
         lifespan=lifespan,
     )
+    application.state.dependencies = get_application_dependencies()
     application.add_middleware(
         CORSMiddleware,
         allow_origins=[

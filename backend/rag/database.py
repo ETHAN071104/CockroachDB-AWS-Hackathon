@@ -8,6 +8,8 @@ from collections.abc import Iterator
 from typing import Optional
 
 from backend.rag.config import DATABASE_PATH, ensure_directories
+from backend.domain import DEFAULT_WORKSPACE_ID
+from backend.repositories.sqlite.connection import connection_scope
 
 
 @dataclass(frozen=True)
@@ -23,25 +25,10 @@ class StoredDocument:
 
 @contextmanager
 def get_connection() -> Iterator[sqlite3.Connection]:
-    """Yield one configured connection and always close it."""
+    """Compatibility entry point backed by the SQLite adapter scope."""
     ensure_directories()
-
-    connection = sqlite3.connect(
-        DATABASE_PATH,
-        timeout=5.0,
-    )
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
-
-    try:
+    with connection_scope(DATABASE_PATH) as connection:
         yield connection
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
 
 
 def initialize_database() -> None:
@@ -57,7 +44,8 @@ def initialize_database() -> None:
                 file_data BLOB NOT NULL,
                 chunk_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
-                updated_at TEXT
+                updated_at TEXT,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'
             )
             """
         )
@@ -95,7 +83,8 @@ def initialize_database() -> None:
                 name TEXT NOT NULL COLLATE NOCASE UNIQUE,
                 description TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'
             )
             """
         )
@@ -106,6 +95,7 @@ def initialize_database() -> None:
                 document_id INTEGER PRIMARY KEY,
                 notebook_id INTEGER NOT NULL,
                 assigned_at TEXT NOT NULL,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
                 FOREIGN KEY (document_id)
                     REFERENCES documents(id)
                     ON DELETE CASCADE,
@@ -134,6 +124,7 @@ def initialize_database() -> None:
                 source_snapshot_json TEXT NOT NULL,
                 generated_at TEXT NOT NULL,
                 fingerprint TEXT NOT NULL,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
                 UNIQUE (kind, scope_kind, scope_key)
             )
             """
@@ -155,7 +146,8 @@ def initialize_database() -> None:
                 extraction_scope_kind TEXT NOT NULL,
                 extraction_scope_key TEXT NOT NULL,
                 generated_at TEXT NOT NULL,
-                source_fingerprint TEXT NOT NULL
+                source_fingerprint TEXT NOT NULL,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'
             )
             """
         )
@@ -183,6 +175,7 @@ def initialize_database() -> None:
                 slide_number INTEGER,
                 excerpt TEXT NOT NULL DEFAULT '',
                 distance REAL,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
                 PRIMARY KEY (topic_id, document_id, chunk_index),
                 FOREIGN KEY (topic_id)
                     REFERENCES topics(id)
@@ -228,6 +221,8 @@ def initialize_database() -> None:
 
 def find_document_by_hash(
     file_hash: str,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> Optional[StoredDocument]:
     with get_connection() as connection:
         row = connection.execute(
@@ -241,9 +236,9 @@ def find_document_by_hash(
                 created_at,
                 COALESCE(updated_at, created_at) AS updated_at
             FROM documents
-            WHERE file_hash = ?
+            WHERE file_hash = ? AND workspace_id = ?
             """,
-            (file_hash,),
+            (file_hash, workspace_id),
         ).fetchone()
 
     if row is None:
@@ -265,6 +260,8 @@ def insert_document(
     mime_type: str,
     file_hash: str,
     file_data: bytes,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> int:
     created_at = datetime.now(timezone.utc).isoformat()
 
@@ -278,9 +275,10 @@ def insert_document(
                 file_data,
                 chunk_count,
                 created_at,
-                updated_at
+                updated_at,
+                workspace_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 filename,
@@ -290,6 +288,7 @@ def insert_document(
                 0,
                 created_at,
                 created_at,
+                workspace_id,
             ),
         )
 
@@ -304,6 +303,8 @@ def insert_document(
 def update_chunk_count(
     document_id: int,
     chunk_count: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     updated_at = datetime.now(timezone.utc).isoformat()
 
@@ -313,9 +314,9 @@ def update_chunk_count(
             UPDATE documents
             SET chunk_count = ?,
                 updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
-            (chunk_count, updated_at, document_id),
+            (chunk_count, updated_at, document_id, workspace_id),
         )
 
         if cursor.rowcount == 0:
@@ -326,15 +327,17 @@ def update_chunk_count(
 
 def get_document_file_data(
     document_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> tuple[str, bytes]:
     with get_connection() as connection:
         row = connection.execute(
             """
             SELECT filename, file_data
             FROM documents
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
-            (document_id,),
+            (document_id, workspace_id),
         ).fetchone()
 
     if row is None:
@@ -350,6 +353,8 @@ def get_document_file_data(
 
 def get_document(
     document_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> Optional[StoredDocument]:
     with get_connection() as connection:
         row = connection.execute(
@@ -363,9 +368,9 @@ def get_document(
                 created_at,
                 COALESCE(updated_at, created_at) AS updated_at
             FROM documents
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
-            (document_id,),
+            (document_id, workspace_id),
         ).fetchone()
 
     if row is None:
@@ -382,7 +387,10 @@ def get_document(
     )
 
 
-def list_documents() -> list[StoredDocument]:
+def list_documents(
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> list[StoredDocument]:
     with get_connection() as connection:
         rows = connection.execute(
             """
@@ -395,8 +403,10 @@ def list_documents() -> list[StoredDocument]:
                 created_at,
                 COALESCE(updated_at, created_at) AS updated_at
             FROM documents
+            WHERE workspace_id = ?
             ORDER BY id DESC
-            """
+            """,
+            (workspace_id,),
         ).fetchall()
 
     return [
@@ -415,22 +425,24 @@ def list_documents() -> list[StoredDocument]:
 
 def delete_document_record(
     document_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> bool:
     with get_connection() as connection:
         notebook_row = connection.execute(
             """
             SELECT notebook_id
             FROM notebook_documents
-            WHERE document_id = ?
+            WHERE document_id = ? AND workspace_id = ?
             """,
-            (document_id,),
+            (document_id, workspace_id),
         ).fetchone()
         cursor = connection.execute(
             """
             DELETE FROM documents
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
-            (document_id,),
+            (document_id, workspace_id),
         )
 
         if cursor.rowcount > 0 and notebook_row is not None:
@@ -451,22 +463,24 @@ def delete_document_record(
 
 def delete_document_record_if_exists(
     document_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     with get_connection() as connection:
         notebook_row = connection.execute(
             """
             SELECT notebook_id
             FROM notebook_documents
-            WHERE document_id = ?
+            WHERE document_id = ? AND workspace_id = ?
             """,
-            (document_id,),
+            (document_id, workspace_id),
         ).fetchone()
         cursor = connection.execute(
             """
             DELETE FROM documents
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
-            (document_id,),
+            (document_id, workspace_id),
         )
 
         if cursor.rowcount > 0 and notebook_row is not None:
@@ -483,13 +497,18 @@ def delete_document_record_if_exists(
             )
 
 
-def document_count() -> int:
+def document_count(
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> int:
     with get_connection() as connection:
         row = connection.execute(
             """
             SELECT COUNT(*) AS total
             FROM documents
-            """
+            WHERE workspace_id = ?
+            """,
+            (workspace_id,),
         ).fetchone()
 
     if row is None:

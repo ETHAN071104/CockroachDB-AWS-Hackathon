@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from backend.rag.database import get_connection
+from backend.domain import DEFAULT_WORKSPACE_ID
 
 
 # ============================================================
@@ -479,15 +480,17 @@ def validate_quiz_question_inputs(
             
 def get_quiz_attempt(
     quiz_attempt_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> StoredQuizAttempt | None:
     with get_connection() as connection:
         row = connection.execute(
             """
             SELECT *
             FROM quiz_attempts
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
-            (quiz_attempt_id,),
+            (quiz_attempt_id, workspace_id),
         ).fetchone()
 
     if row is None:
@@ -500,6 +503,8 @@ def get_quiz_attempt(
 
 def list_quiz_attempts(
     limit: int | None = None,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[StoredQuizAttempt]:
     if limit is not None and limit <= 0:
         raise ValueError(
@@ -509,14 +514,15 @@ def list_quiz_attempts(
     query = """
         SELECT *
         FROM quiz_attempts
+        WHERE workspace_id = ?
         ORDER BY created_at DESC, id DESC
     """
 
-    parameters: tuple[object, ...] = ()
+    parameters: tuple[object, ...] = (workspace_id,)
 
     if limit is not None:
         query += " LIMIT ?"
-        parameters = (limit,)
+        parameters = (workspace_id, limit)
 
     with get_connection() as connection:
         rows = connection.execute(
@@ -532,16 +538,18 @@ def list_quiz_attempts(
 
 def list_quiz_question_attempts(
     quiz_attempt_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[StoredQuizQuestionAttempt]:
     with get_connection() as connection:
         rows = connection.execute(
             """
             SELECT *
             FROM quiz_question_attempts
-            WHERE quiz_attempt_id = ?
+            WHERE quiz_attempt_id = ? AND workspace_id = ?
             ORDER BY question_number ASC
             """,
-            (quiz_attempt_id,),
+            (quiz_attempt_id, workspace_id),
         ).fetchall()
 
     return [
@@ -554,16 +562,18 @@ def list_quiz_question_attempts(
 
 def list_quiz_question_sources(
     question_attempt_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[StoredQuizQuestionSource]:
     with get_connection() as connection:
         rows = connection.execute(
             """
             SELECT *
             FROM quiz_question_sources
-            WHERE question_attempt_id = ?
+            WHERE question_attempt_id = ? AND workspace_id = ?
             ORDER BY source_index ASC
             """,
-            (question_attempt_id,),
+            (question_attempt_id, workspace_id),
         ).fetchall()
 
     return [
@@ -582,6 +592,7 @@ def insert_quiz_attempt_with_questions(
     questions: list[
         QuizQuestionAttemptInput
     ],
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> tuple[
     StoredQuizAttempt,
     tuple[StoredQuizQuestionAttempt, ...],
@@ -671,6 +682,7 @@ def insert_quiz_attempt_with_questions(
         cursor = connection.execute(
             """
             INSERT INTO quiz_attempts (
+                workspace_id,
                 requested_topic,
                 quiz_topic,
                 status,
@@ -684,9 +696,10 @@ def insert_quiz_attempt_with_questions(
                 confidence,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                workspace_id,
                 cleaned_requested_topic,
                 cleaned_quiz_topic,
                 status,
@@ -713,6 +726,7 @@ def insert_quiz_attempt_with_questions(
             question_cursor = connection.execute(
                 """
                 INSERT INTO quiz_question_attempts (
+                    workspace_id,
                     quiz_attempt_id,
                     question_number,
                     question,
@@ -724,9 +738,10 @@ def insert_quiz_attempt_with_questions(
                     skipped,
                     explanation
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    workspace_id,
                     quiz_attempt_id,
                     question.question_number,
                     question.question.strip(),
@@ -761,6 +776,7 @@ def insert_quiz_attempt_with_questions(
                 connection.execute(
                     """
                     INSERT INTO quiz_question_sources (
+                        workspace_id,
                         question_attempt_id,
                         source_index,
                         filename,
@@ -773,9 +789,10 @@ def insert_quiz_attempt_with_questions(
                         slide_number,
                         excerpt
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
+                        workspace_id,
                         question_attempt_id,
                         source.source_index,
                         source.filename.strip(),
@@ -791,7 +808,8 @@ def insert_quiz_attempt_with_questions(
                 )
 
     stored_attempt = get_quiz_attempt(
-        quiz_attempt_id
+        quiz_attempt_id,
+        workspace_id=workspace_id,
     )
 
     if stored_attempt is None:
@@ -803,7 +821,8 @@ def insert_quiz_attempt_with_questions(
         question
         for question
         in list_quiz_question_attempts(
-            quiz_attempt_id
+            quiz_attempt_id,
+            workspace_id=workspace_id,
         )
     )
 
@@ -867,7 +886,8 @@ def initialize_quiz_database_tables(
                     AND confidence <= 1
                 ),
 
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'
         )
         """
     )
@@ -904,6 +924,7 @@ def initialize_quiz_database_tables(
                 CHECK (skipped IN (0, 1)),
 
             explanation TEXT NOT NULL,
+            workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
 
             FOREIGN KEY (
                 quiz_attempt_id
@@ -938,6 +959,7 @@ def initialize_quiz_database_tables(
             mime_type TEXT,
             slide_number INTEGER,
             excerpt TEXT,
+            workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
 
             FOREIGN KEY (
                 question_attempt_id
@@ -1010,6 +1032,7 @@ def initialize_study_database() -> None:
                 status TEXT NOT NULL DEFAULT 'active',
                 started_at TEXT NOT NULL,
                 ended_at TEXT,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
 
                 CHECK (
                     status IN (
@@ -1033,6 +1056,17 @@ def initialize_study_database() -> None:
             """
         )
 
+        _add_columns_if_missing(
+            connection,
+            "study_sessions",
+            {
+                "workspace_id": (
+                    "TEXT NOT NULL DEFAULT "
+                    "'00000000-0000-4000-8000-000000000001'"
+                )
+            },
+        )
+
         connection.execute(
             """
             CREATE INDEX IF NOT EXISTS
@@ -1043,13 +1077,21 @@ def initialize_study_database() -> None:
 
         active_rows = connection.execute(
             """
-            SELECT id, started_at
+            SELECT id, started_at, workspace_id
             FROM study_sessions
             WHERE status = 'active'
-            ORDER BY started_at DESC, id DESC
+            ORDER BY workspace_id ASC, started_at DESC, id DESC
             """
         ).fetchall()
-        for row in active_rows[1:]:
+        seen_active_workspaces: set[str] = set()
+        duplicate_active_rows = []
+        for row in active_rows:
+            workspace_id = str(row["workspace_id"])
+            if workspace_id in seen_active_workspaces:
+                duplicate_active_rows.append(row)
+            else:
+                seen_active_workspaces.add(workspace_id)
+        for row in duplicate_active_rows:
             connection.execute(
                 """
                 UPDATE study_sessions
@@ -1064,7 +1106,7 @@ def initialize_study_database() -> None:
             """
             CREATE UNIQUE INDEX IF NOT EXISTS
             idx_study_sessions_single_active
-            ON study_sessions(status)
+            ON study_sessions(workspace_id)
             WHERE status = 'active'
             """
         )
@@ -1086,6 +1128,7 @@ def initialize_study_database() -> None:
                 answer TEXT NOT NULL,
                 outcome TEXT NOT NULL DEFAULT 'unrated',
                 created_at TEXT NOT NULL,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
 
                 CHECK (
                     outcome IN (
@@ -1145,6 +1188,7 @@ def initialize_study_database() -> None:
                 mime_type TEXT,
                 slide_number INTEGER,
                 excerpt TEXT,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
 
                 CHECK (
                     source_index > 0
@@ -1206,6 +1250,24 @@ def initialize_study_database() -> None:
         initialize_quiz_database_tables(
             connection
         )
+        workspace_column = {
+            "workspace_id": (
+                "TEXT NOT NULL DEFAULT "
+                "'00000000-0000-4000-8000-000000000001'"
+            )
+        }
+        for table_name in (
+            "study_interactions",
+            "study_interaction_sources",
+            "quiz_attempts",
+            "quiz_question_attempts",
+            "quiz_question_sources",
+        ):
+            _add_columns_if_missing(
+                connection,
+                table_name,
+                workspace_column,
+            )
 
 
 # ============================================================
@@ -1305,7 +1367,10 @@ def row_to_interaction_source(
 # SESSION OPERATIONS
 # ============================================================
 
-def create_study_session() -> StoredStudySession:
+def create_study_session(
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> StoredStudySession:
     """
     Create one new active study session.
 
@@ -1322,11 +1387,12 @@ def create_study_session() -> StoredStudySession:
             INSERT INTO study_sessions (
                 status,
                 started_at,
-                ended_at
+                ended_at,
+                workspace_id
             )
-            VALUES ('active', ?, NULL)
+            VALUES ('active', ?, NULL, ?)
             """,
-            (timestamp,),
+            (timestamp, workspace_id),
         )
 
         session_id = cursor.lastrowid
@@ -1337,7 +1403,8 @@ def create_study_session() -> StoredStudySession:
         )
 
     session = get_study_session(
-        int(session_id)
+        int(session_id),
+        workspace_id=workspace_id,
     )
 
     if session is None:
@@ -1351,6 +1418,8 @@ def create_study_session() -> StoredStudySession:
 
 def get_study_session(
     session_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> Optional[StoredStudySession]:
     with get_connection() as connection:
         row = connection.execute(
@@ -1361,9 +1430,9 @@ def get_study_session(
                 started_at,
                 ended_at
             FROM study_sessions
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
-            (int(session_id),),
+            (int(session_id), workspace_id),
         ).fetchone()
 
     if row is None:
@@ -1372,7 +1441,10 @@ def get_study_session(
     return row_to_study_session(row)
 
 
-def get_active_study_session() -> Optional[StoredStudySession]:
+def get_active_study_session(
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> Optional[StoredStudySession]:
     """
     Return the most recently started active session.
     """
@@ -1385,10 +1457,11 @@ def get_active_study_session() -> Optional[StoredStudySession]:
                 started_at,
                 ended_at
             FROM study_sessions
-            WHERE status = 'active'
+            WHERE status = 'active' AND workspace_id = ?
             ORDER BY id DESC
             LIMIT 1
-            """
+            """,
+            (workspace_id,),
         ).fetchone()
 
     if row is None:
@@ -1397,22 +1470,27 @@ def get_active_study_session() -> Optional[StoredStudySession]:
     return row_to_study_session(row)
 
 
-def get_or_create_active_study_session() -> StoredStudySession:
+def get_or_create_active_study_session(
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> StoredStudySession:
     """
     Resume an interrupted active session or create a new one.
     """
     timestamp = datetime.now(timezone.utc).isoformat()
 
     with get_connection() as connection:
-        connection.execute("BEGIN IMMEDIATE")
+        if not connection.in_transaction:
+            connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
             """
             SELECT id, status, started_at, ended_at
             FROM study_sessions
-            WHERE status = 'active'
+            WHERE status = 'active' AND workspace_id = ?
             ORDER BY started_at DESC, id DESC
             LIMIT 1
-            """
+            """,
+            (workspace_id,),
         ).fetchone()
 
         if row is None:
@@ -1421,11 +1499,12 @@ def get_or_create_active_study_session() -> StoredStudySession:
                 INSERT INTO study_sessions (
                     status,
                     started_at,
-                    ended_at
+                    ended_at,
+                    workspace_id
                 )
-                VALUES ('active', ?, NULL)
+                VALUES ('active', ?, NULL, ?)
                 """,
-                (timestamp,),
+                (timestamp, workspace_id),
             )
             session_id = cursor.lastrowid
             if session_id is None:
@@ -1436,9 +1515,9 @@ def get_or_create_active_study_session() -> StoredStudySession:
                 """
                 SELECT id, status, started_at, ended_at
                 FROM study_sessions
-                WHERE id = ?
+                WHERE id = ? AND workspace_id = ?
                 """,
-                (int(session_id),),
+                (int(session_id), workspace_id),
             ).fetchone()
 
     if row is None:
@@ -1505,7 +1584,10 @@ def end_study_session(
     return completed
 
 
-def list_study_sessions() -> list[StoredStudySession]:
+def list_study_sessions(
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> list[StoredStudySession]:
     with get_connection() as connection:
         rows = connection.execute(
             """
@@ -1515,8 +1597,10 @@ def list_study_sessions() -> list[StoredStudySession]:
                 started_at,
                 ended_at
             FROM study_sessions
+            WHERE workspace_id = ?
             ORDER BY id DESC
-            """
+            """,
+            (workspace_id,),
         ).fetchall()
 
     return [
@@ -1649,6 +1733,8 @@ def get_study_interaction(
 
 def list_session_interactions(
     session_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[StoredStudyInteraction]:
     with get_connection() as connection:
         rows = connection.execute(
@@ -1661,10 +1747,10 @@ def list_session_interactions(
                 outcome,
                 created_at
             FROM study_interactions
-            WHERE session_id = ?
+            WHERE session_id = ? AND workspace_id = ?
             ORDER BY id ASC
             """,
-            (int(session_id),),
+            (int(session_id), workspace_id),
         ).fetchall()
 
     return [
@@ -1848,6 +1934,8 @@ def insert_interaction_sources(
 
 def list_interaction_sources(
     interaction_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[StoredInteractionSource]:
     with get_connection() as connection:
         rows = connection.execute(
@@ -1866,10 +1954,10 @@ def list_interaction_sources(
                 slide_number,
                 excerpt
             FROM study_interaction_sources
-            WHERE interaction_id = ?
+            WHERE interaction_id = ? AND workspace_id = ?
             ORDER BY source_index ASC
             """,
-            (int(interaction_id),),
+            (int(interaction_id), workspace_id),
         ).fetchall()
 
     return [
@@ -1883,6 +1971,8 @@ def insert_study_interaction_with_sources(
     answer: str,
     sources: list[StudySourceInput],
     outcome: str = "unrated",
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> tuple[
     StoredStudyInteraction,
     list[StoredInteractionSource],
@@ -1895,7 +1985,8 @@ def insert_study_interaction_with_sources(
     is rolled back as part of the same SQLite transaction.
     """
     session = get_study_session(
-        session_id
+        session_id,
+        workspace_id=workspace_id,
     )
 
     if session is None:
@@ -2040,15 +2131,17 @@ def insert_study_interaction_with_sources(
         cursor = connection.execute(
             """
             INSERT INTO study_interactions (
+                workspace_id,
                 session_id,
                 question,
                 answer,
                 outcome,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
+                workspace_id,
                 int(session_id),
                 cleaned_question,
                 cleaned_answer,
@@ -2069,6 +2162,7 @@ def insert_study_interaction_with_sources(
         if prepared_sources:
             source_rows = [
                 (
+                    workspace_id,
                     interaction_id,
                     source_index,
                     filename,
@@ -2098,6 +2192,7 @@ def insert_study_interaction_with_sources(
             connection.executemany(
                 """
                 INSERT INTO study_interaction_sources (
+                    workspace_id,
                     interaction_id,
                     source_index,
                     filename,
@@ -2110,7 +2205,7 @@ def insert_study_interaction_with_sources(
                     slide_number,
                     excerpt
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 source_rows,
             )
@@ -2126,7 +2221,8 @@ def insert_study_interaction_with_sources(
         )
 
     stored_sources = list_interaction_sources(
-        interaction_id
+        interaction_id,
+        workspace_id=workspace_id,
     )
 
     return interaction, stored_sources

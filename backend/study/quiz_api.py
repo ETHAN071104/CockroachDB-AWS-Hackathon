@@ -1,18 +1,22 @@
 from __future__ import annotations
 
-from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from threading import RLock
 from typing import Any
 from uuid import uuid4
 
 from backend.rag.scope import RetrievalScope
 from backend.study.quiz_generator import GeneratedGroundedQuiz, generate_grounded_quiz
-from backend.study.quiz_history import save_quiz_run_result
 from backend.study.quiz_runner import QuizQuestionAttempt, QuizRunResult
+from backend.application.dependencies import get_application_dependencies
+from backend.rag.rag_service import RetrievedSource
+from backend.study.quiz_generator import GroundedQuiz
 
 
 MAX_PENDING_QUIZZES = 128
+PENDING_QUIZ_TTL = timedelta(hours=24)
+PENDING_QUIZ_WORKFLOW = "pending_quiz"
 
 
 class PendingQuizNotFoundError(LookupError):
@@ -86,17 +90,20 @@ class QuizSubmissionResult:
 
 
 _registry_lock = RLock()
-_pending_quizzes: OrderedDict[str, GeneratedGroundedQuiz] = OrderedDict()
+
+
+def _workflow_repository():
+    return get_application_dependencies().workflows
 
 
 def clear_quiz_registry() -> None:
     with _registry_lock:
-        _pending_quizzes.clear()
+        _workflow_repository().clear_type(PENDING_QUIZ_WORKFLOW)
 
 
 def pending_quiz_count() -> int:
     with _registry_lock:
-        return len(_pending_quizzes)
+        return _workflow_repository().count_pending(PENDING_QUIZ_WORKFLOW)
 
 
 def generate_quiz_for_api(
@@ -114,10 +121,14 @@ def generate_quiz_for_api(
 
     quiz_id = str(uuid4())
     with _registry_lock:
-        _pending_quizzes[quiz_id] = generated
-        _pending_quizzes.move_to_end(quiz_id)
-        while len(_pending_quizzes) > MAX_PENDING_QUIZZES:
-            _pending_quizzes.popitem(last=False)
+        repository = _workflow_repository()
+        repository.put(
+            quiz_id,
+            PENDING_QUIZ_WORKFLOW,
+            _serialize_generated_quiz(generated),
+            (datetime.now(timezone.utc) + PENDING_QUIZ_TTL).isoformat(),
+        )
+        repository.trim_pending(PENDING_QUIZ_WORKFLOW, MAX_PENDING_QUIZZES)
 
     questions = tuple(
         PresentedQuizQuestion(
@@ -194,15 +205,25 @@ def submit_quiz(
     responses: list[QuizResponse],
 ) -> QuizSubmissionResult:
     with _registry_lock:
-        generated = _pending_quizzes.get(quiz_id)
-        if generated is None:
+        dependencies = get_application_dependencies()
+        state = dependencies.workflows.get(quiz_id, PENDING_QUIZ_WORKFLOW)
+        if state is None:
             raise PendingQuizNotFoundError(
                 "Pending quiz was not found. It may have expired or been submitted."
             )
 
+        generated = _deserialize_generated_quiz(state.payload)
         run_result = score_quiz(generated, responses)
-        stored_attempt, _stored_questions = save_quiz_run_result(run_result)
-        del _pending_quizzes[quiz_id]
+        with dependencies.unit_of_work():
+            stored_attempt, _stored_questions = dependencies.quizzes.save_run_result(
+                run_result
+            )
+            dependencies.workflows.decide(
+                state.id,
+                state.version,
+                "completed",
+                {"attempt_id": stored_attempt.id, "action": "submitted"},
+            )
 
     sources_by_index = {source.index: source for source in generated.sources}
     feedback: list[QuizQuestionFeedback] = []
@@ -213,10 +234,12 @@ def submit_quiz(
             source = sources_by_index[source_index]
             notebook_id: int | None = None
             if source.document_id is not None:
-                from backend.rag.notebooks import get_document_record
-
-                record = get_document_record(source.document_id)
-                notebook_id = record.notebook_id if record is not None else None
+                try:
+                    notebook_id = dependencies.notebooks.get_document_notebook_id(
+                        source.document_id
+                    )
+                except LookupError:
+                    notebook_id = None
             question_sources.append(
                 QuizFeedbackSource(
                     index=source.index,
@@ -255,4 +278,33 @@ def submit_quiz(
         score_percentage=stored_attempt.score_percentage,
         accuracy_percentage=stored_attempt.accuracy_percentage,
         feedback=tuple(feedback),
+    )
+
+
+def _serialize_generated_quiz(generated: GeneratedGroundedQuiz) -> dict[str, object]:
+    return {
+        "requested_topic": generated.requested_topic,
+        "sources": [asdict(source) for source in generated.sources],
+        "quiz": generated.quiz.model_dump(mode="json"),
+    }
+
+
+def _deserialize_generated_quiz(payload: dict[str, object]) -> GeneratedGroundedQuiz:
+    raw_sources = payload.get("sources")
+    raw_quiz = payload.get("quiz")
+    requested_topic = payload.get("requested_topic")
+    if (
+        not isinstance(raw_sources, list)
+        or not isinstance(raw_quiz, dict)
+        or not isinstance(requested_topic, str)
+    ):
+        raise PendingQuizNotFoundError("The stored pending quiz is invalid.")
+    return GeneratedGroundedQuiz(
+        requested_topic=requested_topic,
+        sources=tuple(
+            RetrievedSource(**source)
+            for source in raw_sources
+            if isinstance(source, dict)
+        ),
+        quiz=GroundedQuiz.model_validate(raw_quiz),
     )

@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
+from backend.application.dependencies import get_application_dependencies
 from backend.study.database import (
     StoredStudyInteraction,
-    list_study_sessions,
 )
 from backend.study.reporting import (
     StudyOutcomeCounts,
@@ -113,7 +113,7 @@ def build_progress_report(
 
     completed_sessions = [
         session
-        for session in list_study_sessions()
+        for session in get_application_dependencies().study_sessions.list()
         if session.status == "completed"
     ]
 

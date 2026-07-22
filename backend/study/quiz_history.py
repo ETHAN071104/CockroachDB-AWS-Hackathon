@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.application.dependencies import get_application_dependencies
+from backend.domain import DEFAULT_WORKSPACE_ID
 from backend.study.database import (
     QuizQuestionAttemptInput,
     QuizQuestionSourceInput,
@@ -8,7 +10,6 @@ from backend.study.database import (
     insert_quiz_attempt_with_questions,
 )
 from backend.study.quiz_runner import QuizRunResult
-from backend.rag.notebooks import get_document_record
 
 
 def build_quiz_question_inputs(
@@ -149,13 +150,7 @@ def build_quiz_question_inputs(
                     chunk_index=source.chunk_index,
                     distance=source.distance,
                     document_id=source.document_id,
-                    notebook_id=(
-                        record.notebook_id
-                        if source.document_id is not None
-                        and (record := get_document_record(source.document_id))
-                        is not None
-                        else None
-                    ),
+                    notebook_id=_source_notebook_id(source.document_id),
                     mime_type=source.mime_type,
                     slide_number=source.slide_number,
                     excerpt=source.text[:2_000],
@@ -207,6 +202,8 @@ def build_quiz_question_inputs(
 
 def save_quiz_run_result(
     result: QuizRunResult,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> tuple[
     StoredQuizAttempt,
     tuple[StoredQuizQuestionAttempt, ...],
@@ -229,4 +226,16 @@ def save_quiz_run_result(
         confidence=quiz.confidence,
         aborted=result.aborted,
         questions=question_inputs,
+        workspace_id=workspace_id,
     )
+
+
+def _source_notebook_id(document_id: int | None) -> int | None:
+    if document_id is None:
+        return None
+    try:
+        return get_application_dependencies().notebooks.get_document_notebook_id(
+            document_id
+        )
+    except LookupError:
+        return None

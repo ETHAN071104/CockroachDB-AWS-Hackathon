@@ -7,9 +7,9 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 from backend.llm.factory import create_chat_model
+from backend.application.dependencies import get_application_dependencies
 from backend.memory.database import (
     StoredMemory,
-    get_memories_by_ids,
 )
 from backend.memory.models import MemoryConsolidationCandidate
 from backend.rag.config import LLM_PROVIDER
@@ -271,9 +271,7 @@ def load_consolidation_sources(
             "Duplicate memory IDs are not allowed."
         )
 
-    memories = get_memories_by_ids(
-        cleaned_ids
-    )
+    memories = get_application_dependencies().memories.get_many(cleaned_ids)
 
     if len(memories) != len(cleaned_ids):
         found_ids = {

@@ -5,13 +5,11 @@ import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 
+from backend.application.dependencies import get_application_dependencies
 from backend.rag.scope import RetrievalScope, ResolvedRetrievalScope, resolve_retrieval_scope
 from backend.study.database import (
     StoredInteractionSource,
     StoredStudyInteraction,
-    list_interaction_sources,
-    list_session_interactions,
-    list_study_sessions,
 )
 from backend.study.scope_filter import source_matches_scope
 
@@ -192,7 +190,7 @@ def build_review_queue(
 
     completed_sessions = [
         session
-        for session in list_study_sessions()
+        for session in get_application_dependencies().study_sessions.list()
         if session.status == "completed"
     ]
 
@@ -219,9 +217,8 @@ def build_review_queue(
     scanned_interaction_count = 0
 
     for session in completed_sessions:
-        interactions = list_session_interactions(
-            session.id
-        )
+        repository = get_application_dependencies().study_sessions
+        interactions = repository.list_interactions(session.id)
 
         scanned_interaction_count += len(
             interactions
@@ -229,7 +226,7 @@ def build_review_queue(
 
         for interaction in interactions:
             stored_sources = tuple(
-                list_interaction_sources(interaction.id)
+                repository.list_sources(interaction.id)
             )
             matching_sources = tuple(
                 source

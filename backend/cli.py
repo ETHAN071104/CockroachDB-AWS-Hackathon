@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from backend.application.dependencies import initialize_application_foundation
 from backend.memory.conflict_detector import detect_memory_conflict
 from backend.memory.consolidator import propose_memory_consolidation
 from backend.memory.database import initialize_memory_database
@@ -21,13 +22,12 @@ from backend.memory.service import (
 from backend.memory.validator import validate_memory_candidate
 from backend.rag.config import ENABLE_MEMORY_PROPOSALS
 from backend.rag.database import (
-    delete_document_record,
     initialize_database,
     list_documents,
 )
+from backend.rag.document_service import delete_document as delete_stored_document
 from backend.rag.ingestion import index_file
 from backend.rag.rag_service import RetrievedSource, answer_question
-from backend.rag.vector_store import delete_document_vectors
 from backend.study.coach import format_coaching_plan, generate_coaching_plan
 from backend.study.database import (
     StudySourceInput,
@@ -2013,15 +2013,7 @@ def delete_file_interface() -> None:
         return
 
     try:
-        # Delete vectors first. If this fails, retain the SQLite file.
-        delete_document_vectors(document_id)
-
-        deleted = delete_document_record(document_id)
-
-        if not deleted:
-            print("The SQLite record was not found.")
-            return
-
+        delete_stored_document(document_id)
         print(f'Deleted "{selected_document.filename}".')
 
     except Exception as error:
@@ -2032,6 +2024,7 @@ def main() -> None:
     initialize_memory_database()
     initialize_database()
     initialize_study_database()
+    initialize_application_foundation()
 
     print_header()
 

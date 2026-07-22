@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from backend.rag.database import get_connection
+from backend.domain import DEFAULT_WORKSPACE_ID
 
 
 # ============================================================
@@ -74,6 +75,7 @@ def initialize_memory_database() -> None:
                 status TEXT NOT NULL DEFAULT 'active',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
 
                 CHECK (
                     memory_type IN (
@@ -126,6 +128,7 @@ def initialize_memory_database() -> None:
                 target_memory_id INTEGER NOT NULL,
                 relationship_type TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+                workspace_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
 
                 CHECK (
                     relationship_type IN (
@@ -292,6 +295,8 @@ def insert_memory(
     content: str,
     confidence: float,
     importance: float,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> int:
     cleaned_type = validate_memory_type(
         memory_type
@@ -328,9 +333,10 @@ def insert_memory(
                 importance,
                 status,
                 created_at,
-                updated_at
+                updated_at,
+                workspace_id
             )
-            VALUES (?, ?, ?, ?, 'active', ?, ?)
+            VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
             """,
             (
                 cleaned_type,
@@ -339,6 +345,7 @@ def insert_memory(
                 cleaned_importance,
                 timestamp,
                 timestamp,
+                workspace_id,
             ),
         )
 
@@ -358,6 +365,8 @@ def insert_memory(
 
 def get_memory(
     memory_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> Optional[StoredMemory]:
     with get_connection() as connection:
         row = connection.execute(
@@ -372,9 +381,9 @@ def get_memory(
                 created_at,
                 updated_at
             FROM memories
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
-            (int(memory_id),),
+            (int(memory_id), workspace_id),
         ).fetchone()
 
     if row is None:
@@ -385,6 +394,8 @@ def get_memory(
 
 def get_memories_by_ids(
     memory_ids: list[int],
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[StoredMemory]:
     """
     Load multiple memories while preserving requested order.
@@ -420,9 +431,9 @@ def get_memories_by_ids(
                 created_at,
                 updated_at
             FROM memories
-            WHERE id IN ({placeholders})
+            WHERE id IN ({placeholders}) AND workspace_id = ?
             """,
-            tuple(unique_ids),
+            tuple([*unique_ids, workspace_id]),
         ).fetchall()
 
     memories_by_id = {
@@ -439,6 +450,8 @@ def get_memories_by_ids(
 
 def list_memories(
     include_archived: bool = False,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[StoredMemory]:
     with get_connection() as connection:
         if include_archived:
@@ -454,8 +467,10 @@ def list_memories(
                     created_at,
                     updated_at
                 FROM memories
+                WHERE workspace_id = ?
                 ORDER BY id DESC
-                """
+                """,
+                (workspace_id,),
             ).fetchall()
 
         else:
@@ -471,9 +486,10 @@ def list_memories(
                     created_at,
                     updated_at
                 FROM memories
-                WHERE status = 'active'
+                WHERE status = 'active' AND workspace_id = ?
                 ORDER BY id DESC
-                """
+                """,
+                (workspace_id,),
             ).fetchall()
 
     return [
@@ -492,6 +508,8 @@ def update_memory_record(
     content: str,
     confidence: float,
     importance: float,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> bool:
     cleaned_type = validate_memory_type(
         memory_type
@@ -528,7 +546,7 @@ def update_memory_record(
                 confidence = ?,
                 importance = ?,
                 updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
             (
                 cleaned_type,
@@ -537,6 +555,7 @@ def update_memory_record(
                 cleaned_importance,
                 timestamp,
                 int(memory_id),
+                workspace_id,
             ),
         )
 
@@ -545,6 +564,8 @@ def update_memory_record(
 
 def archive_memory_record(
     memory_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> bool:
     timestamp = datetime.now(
         timezone.utc
@@ -557,11 +578,12 @@ def archive_memory_record(
             SET
                 status = 'archived',
                 updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
             (
                 timestamp,
                 int(memory_id),
+                workspace_id,
             ),
         )
 
@@ -569,6 +591,8 @@ def archive_memory_record(
     
 def activate_memory_record(
     memory_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> bool:
     """
     Restore an archived memory to active status.
@@ -587,11 +611,13 @@ def activate_memory_record(
                 status = 'active',
                 updated_at = ?
             WHERE id = ?
+              AND workspace_id = ?
               AND status = 'archived'
             """,
             (
                 timestamp,
                 int(memory_id),
+                workspace_id,
             ),
         )
 
@@ -604,14 +630,16 @@ def activate_memory_record(
 
 def delete_memory_record(
     memory_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> bool:
     with get_connection() as connection:
         cursor = connection.execute(
             """
             DELETE FROM memories
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             """,
-            (int(memory_id),),
+            (int(memory_id), workspace_id),
         )
 
         return cursor.rowcount > 0
@@ -625,6 +653,8 @@ def insert_memory_relationships(
     source_memory_ids: list[int],
     target_memory_id: int,
     relationship_type: str = "consolidated_into",
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     """
     Record that source memories were consolidated into one
@@ -663,6 +693,7 @@ def insert_memory_relationships(
 
     rows = [
         (
+            workspace_id,
             source_memory_id,
             cleaned_target_id,
             cleaned_relationship_type,
@@ -675,12 +706,13 @@ def insert_memory_relationships(
         connection.executemany(
             """
             INSERT INTO memory_relationships (
+                workspace_id,
                 source_memory_id,
                 target_memory_id,
                 relationship_type,
                 created_at
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -716,6 +748,8 @@ def get_relationships_for_target(
 
 def delete_relationships_for_target(
     target_memory_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> int:
     """
     Remove lineage records for a consolidation target.
@@ -726,9 +760,9 @@ def delete_relationships_for_target(
         cursor = connection.execute(
             """
             DELETE FROM memory_relationships
-            WHERE target_memory_id = ?
+            WHERE target_memory_id = ? AND workspace_id = ?
             """,
-            (int(target_memory_id),),
+            (int(target_memory_id), workspace_id),
         )
 
         return cursor.rowcount

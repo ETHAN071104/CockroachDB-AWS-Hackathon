@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from typing import Iterable, Sequence
 from uuid import UUID, uuid4
 
+from backend.domain import DEFAULT_WORKSPACE_ID
+
 from backend.rag.database import get_connection, initialize_database
 
 
@@ -127,6 +129,8 @@ def get_cached_intelligence(
     kind: str,
     scope_kind: str,
     scope_key: object = None,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> CachedIntelligence | None:
     normalized_kind = _normalize_cache_kind(kind)
     normalized_scope_kind = _normalize_scope_kind(scope_kind)
@@ -150,11 +154,13 @@ def get_cached_intelligence(
             WHERE kind = ?
               AND scope_kind = ?
               AND scope_key = ?
+              AND workspace_id = ?
             """,
             (
                 normalized_kind,
                 normalized_scope_kind,
                 normalized_scope_key,
+                workspace_id,
             ),
         ).fetchone()
 
@@ -166,9 +172,10 @@ def list_cached_intelligence(
     kind: str | None = None,
     scope_kind: str | None = None,
     scope_key: object = None,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[CachedIntelligence]:
-    where_clauses: list[str] = []
-    parameters: list[object] = []
+    where_clauses: list[str] = ["workspace_id = ?"]
+    parameters: list[object] = [workspace_id]
 
     if kind is not None:
         where_clauses.append("kind = ?")
@@ -224,6 +231,7 @@ def replace_cached_intelligence(
     fingerprint: str,
     generated_at: str | None = None,
     require_current_fingerprint: bool = True,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> CachedIntelligence:
     """Atomically replace latest cache after all values validate."""
     normalized_kind = _normalize_cache_kind(kind)
@@ -254,6 +262,7 @@ def replace_cached_intelligence(
         connection.execute(
             """
             INSERT INTO cached_intelligence (
+                workspace_id,
                 kind,
                 scope_kind,
                 scope_key,
@@ -262,14 +271,16 @@ def replace_cached_intelligence(
                 generated_at,
                 fingerprint
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(kind, scope_kind, scope_key) DO UPDATE SET
                 result_json = excluded.result_json,
                 source_snapshot_json = excluded.source_snapshot_json,
                 generated_at = excluded.generated_at,
                 fingerprint = excluded.fingerprint
+            WHERE cached_intelligence.workspace_id = excluded.workspace_id
             """,
             (
+                workspace_id,
                 normalized_kind,
                 normalized_scope_kind,
                 normalized_scope_key,
@@ -284,6 +295,7 @@ def replace_cached_intelligence(
         normalized_kind,
         normalized_scope_kind,
         normalized_scope_key,
+        workspace_id=workspace_id,
     )
     if cached is None:
         raise RuntimeError("Replaced cache could not be loaded.")
@@ -294,6 +306,8 @@ def delete_cached_intelligence(
     kind: str,
     scope_kind: str,
     scope_key: object = None,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> bool:
     normalized_kind = _normalize_cache_kind(kind)
     normalized_scope_kind = _normalize_scope_kind(scope_kind)
@@ -308,11 +322,13 @@ def delete_cached_intelligence(
             WHERE kind = ?
               AND scope_kind = ?
               AND scope_key = ?
+              AND workspace_id = ?
             """,
             (
                 normalized_kind,
                 normalized_scope_kind,
                 normalized_scope_key,
+                workspace_id,
             ),
         )
         return cursor.rowcount > 0
@@ -334,6 +350,7 @@ def replace_topics_for_scope(
     *,
     fingerprint: str,
     generated_at: str | None = None,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[Topic]:
     """Atomically replace one extraction scope and preserve old on error."""
     normalized_scope_kind = _normalize_scope_kind(scope_kind)
@@ -378,8 +395,9 @@ def replace_topics_for_scope(
             FROM topics
             WHERE extraction_scope_kind = ?
               AND extraction_scope_key = ?
+              AND workspace_id = ?
             """,
-            (normalized_scope_kind, normalized_scope_key),
+            (normalized_scope_kind, normalized_scope_key, workspace_id),
         ).fetchall()
         old_topic_ids = [str(row["id"]) for row in old_topic_rows]
         if old_topic_ids:
@@ -389,8 +407,9 @@ def replace_topics_for_scope(
                 DELETE FROM cached_intelligence
                 WHERE scope_kind = 'topic'
                   AND scope_key IN ({placeholders})
+                  AND workspace_id = ?
                 """,
-                old_topic_ids,
+                [*old_topic_ids, workspace_id],
             )
 
         connection.execute(
@@ -398,14 +417,16 @@ def replace_topics_for_scope(
             DELETE FROM topics
             WHERE extraction_scope_kind = ?
               AND extraction_scope_key = ?
+              AND workspace_id = ?
             """,
-            (normalized_scope_kind, normalized_scope_key),
+            (normalized_scope_kind, normalized_scope_key, workspace_id),
         )
 
         for topic in validated_topics:
             connection.execute(
                 """
                 INSERT INTO topics (
+                    workspace_id,
                     id,
                     name,
                     description,
@@ -414,9 +435,10 @@ def replace_topics_for_scope(
                     generated_at,
                     source_fingerprint
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    workspace_id,
                     topic.id,
                     topic.name,
                     topic.description,
@@ -429,6 +451,7 @@ def replace_topics_for_scope(
             connection.executemany(
                 """
                 INSERT INTO topic_sources (
+                    workspace_id,
                     topic_id,
                     document_id,
                     chunk_index,
@@ -440,10 +463,11 @@ def replace_topics_for_scope(
                     excerpt,
                     distance
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
+                        workspace_id,
                         topic.id,
                         source.document_id,
                         source.chunk_index,
@@ -462,12 +486,21 @@ def replace_topics_for_scope(
     return list_topics(
         scope_kind=normalized_scope_kind,
         scope_key=normalized_scope_key,
+        workspace_id=workspace_id,
     )
 
 
-def get_topic(topic_id: str) -> Topic | None:
+def get_topic(
+    topic_id: str,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> Topic | None:
     normalized_id = str(_parse_uuid(topic_id, "topic ID"))
-    topics = _load_topics(where_sql="WHERE t.id = ?", parameters=[normalized_id])
+    topics = _load_topics(
+        where_sql="WHERE t.id = ? AND t.workspace_id = ?",
+        parameters=[normalized_id, workspace_id],
+        workspace_id=workspace_id,
+    )
     return topics[0] if topics else None
 
 
@@ -476,9 +509,10 @@ def list_topics(
     scope_kind: str | None = None,
     scope_key: object = None,
     search: str | None = None,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[Topic]:
-    where_clauses: list[str] = []
-    parameters: list[object] = []
+    where_clauses: list[str] = ["t.workspace_id = ?"]
+    parameters: list[object] = [workspace_id]
 
     if scope_kind is not None:
         normalized_scope_kind = _normalize_scope_kind(scope_kind)
@@ -514,7 +548,11 @@ def list_topics(
         if where_clauses
         else ""
     )
-    return _load_topics(where_sql=where_sql, parameters=parameters)
+    return _load_topics(
+        where_sql=where_sql,
+        parameters=parameters,
+        workspace_id=workspace_id,
+    )
 
 
 def delete_topic(topic_id: str) -> bool:
@@ -607,6 +645,7 @@ def _load_topics(
     *,
     where_sql: str,
     parameters: list[object],
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[Topic]:
     with get_connection() as connection:
         topic_rows = connection.execute(
@@ -645,9 +684,10 @@ def _load_topics(
                     distance
                 FROM topic_sources
                 WHERE topic_id IN ({placeholders})
+                  AND workspace_id = ?
                 ORDER BY source_index ASC, document_id ASC, chunk_index ASC
                 """,
-                topic_ids,
+                [*topic_ids, workspace_id],
             ).fetchall()
 
     grouped_sources: dict[str, list[TopicSourcePair]] = {

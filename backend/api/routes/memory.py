@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Query
 
 from backend.api.errors import ApiError
+from backend.application.dependencies import get_application_dependencies
 from backend.api.schemas import (
     ConsolidationApplyRequest,
     ConsolidationApplyResultResponse,
@@ -28,7 +28,7 @@ from backend.memory.consolidation_registry import (
     apply_pending_memory_consolidation,
     create_memory_consolidation,
 )
-from backend.memory.database import StoredMemory, get_memory
+from backend.memory.database import StoredMemory
 from backend.memory.proposals import (
     MemoryProposalDecisionError,
     MemoryProposalNotFoundError,
@@ -43,6 +43,7 @@ from backend.memory.service import (
     search_memories,
     update_memory,
 )
+from backend.repositories.interfaces import RepositoryConflictError
 
 
 router = APIRouter(prefix="/api", tags=["memory"])
@@ -108,7 +109,7 @@ def _consolidation_response(
 
 
 def _memory_or_404(memory_id: int) -> StoredMemory:
-    memory = get_memory(memory_id)
+    memory = get_application_dependencies().memories.get(memory_id)
 
     if memory is None:
         raise ApiError(
@@ -220,12 +221,12 @@ def decide_memory_proposal_route(
         ) from error
 
     saved_memory = (
-        get_memory(result.saved_memory.id)
+        get_application_dependencies().memories.get(result.saved_memory.id)
         if result.saved_memory is not None
         else None
     )
     archived_memory = (
-        get_memory(result.archived_memory.id)
+        get_application_dependencies().memories.get(result.archived_memory.id)
         if result.archived_memory is not None
         else None
     )
@@ -292,11 +293,11 @@ def _apply_consolidation(
             ),
         ) from error
 
-    consolidated = get_memory(
+    consolidated = get_application_dependencies().memories.get(
         result.consolidated_memory.id
     ) or result.consolidated_memory
     archived_sources = [
-        get_memory(memory.id) or memory
+        get_application_dependencies().memories.get(memory.id) or memory
         for memory in result.source_memories
     ]
     return ConsolidationApplyResultResponse(
@@ -420,7 +421,7 @@ def delete_memory_route(
 
     try:
         deleted = delete_memory(memory_id)
-    except sqlite3.IntegrityError as error:
+    except RepositoryConflictError as error:
         raise ApiError(
             status_code=409,
             code="memory_in_use",

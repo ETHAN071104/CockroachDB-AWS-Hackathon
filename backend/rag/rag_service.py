@@ -8,6 +8,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
 from backend.llm.factory import create_chat_model
+from backend.application.dependencies import get_application_dependencies
 from backend.memory.service import (
     MemorySearchResult,
     search_memories,
@@ -19,6 +20,7 @@ from backend.rag.scope import (
     resolve_retrieval_scope,
 )
 from backend.rag.vector_store import get_vector_store
+from backend.repositories.chroma import ChromaDocumentVectorRepository
 
 
 @dataclass(frozen=True)
@@ -138,24 +140,12 @@ def retrieve_sources(
     if resolved_scope.is_empty:
         return []
 
-    vector_store = get_vector_store()
-
-    if resolved_scope.chroma_filter is None:
-        raw_results: list[tuple[Document, float]] = (
-            vector_store.similarity_search_with_score(
-                query=cleaned_question,
-                k=k,
-            )
-        )
-
-    else:
-        raw_results = (
-            vector_store.similarity_search_with_score(
-                query=cleaned_question,
-                k=k,
-                filter=resolved_scope.chroma_filter,
-            )
-        )
+    vectors = ChromaDocumentVectorRepository(get_vector_store)
+    raw_results: list[tuple[Document, float]] = vectors.search(
+        cleaned_question,
+        k,
+        resolved_scope.chroma_filter,
+    )
 
     sources: list[RetrievedSource] = []
 
@@ -196,6 +186,15 @@ def retrieve_sources(
 
             if converted_document_id > 0:
                 document_id = converted_document_id
+
+        # Chroma collections created before workspace metadata existed remain
+        # readable. The authoritative relational repository still prevents a
+        # chunk owned by another workspace from being returned.
+        if (
+            document_id is not None
+            and get_application_dependencies().documents.get(document_id) is None
+        ):
+            continue
 
         raw_mime_type = metadata.get("mime_type")
         mime_type = (

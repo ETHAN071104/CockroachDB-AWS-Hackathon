@@ -5,9 +5,8 @@ from dataclasses import dataclass
 
 import backend.memory.proposals as memory_proposals
 import backend.rag.rag_service as rag_service
-import backend.study.database as study_database
+from backend.application.dependencies import get_application_dependencies
 from backend.memory.proposals import PendingMemoryProposal
-from backend.rag.notebooks import get_document_notebook_id
 from backend.rag.scope import (
     RetrievalScope,
     TopicSourceRepository,
@@ -54,7 +53,8 @@ def run_chat(
         scope,
         topic_source_repository=topic_source_repository,
     )
-    session = study_database.get_or_create_active_study_session()
+    dependencies = get_application_dependencies()
+    session = dependencies.study_sessions.get_or_create_active()
     answer, retrieved_sources = rag_service.answer_question(
         cleaned_question,
         scope=scope,
@@ -65,15 +65,16 @@ def run_chat(
         _study_source_input(source)
         for source in retrieved_sources
     ]
-    interaction, stored_sources = (
-        study_database.insert_study_interaction_with_sources(
+    with dependencies.unit_of_work():
+        interaction, stored_sources = (
+            dependencies.study_sessions.insert_interaction_with_sources(
             session_id=session.id,
             question=cleaned_question,
             answer=answer,
             sources=source_inputs,
             outcome="unrated",
+            )
         )
-    )
 
     proposal: PendingMemoryProposal | None = None
 
@@ -102,7 +103,9 @@ def _study_source_input(
     source: rag_service.RetrievedSource,
 ) -> StudySourceInput:
     notebook_id = (
-        get_document_notebook_id(source.document_id)
+        get_application_dependencies().notebooks.get_document_notebook_id(
+            source.document_id
+        )
         if source.document_id is not None
         else None
     )

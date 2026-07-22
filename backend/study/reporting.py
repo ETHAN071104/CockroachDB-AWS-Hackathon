@@ -3,12 +3,10 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
+from backend.application.dependencies import get_application_dependencies
 from backend.study.database import (
     StoredStudyInteraction,
     StoredStudySession,
-    get_study_session,
-    list_interaction_sources,
-    list_session_interactions,
 )
 
 
@@ -41,16 +39,15 @@ def build_session_report(
 
     No LLM is called and no database records are changed.
     """
-    session = get_study_session(session_id)
+    repository = get_application_dependencies().study_sessions
+    session = repository.get(session_id)
 
     if session is None:
         raise ValueError(
             f"Study session ID {session_id} does not exist."
         )
 
-    interactions = list_session_interactions(
-        session_id
-    )
+    interactions = repository.list_interactions(session_id)
 
     outcome_counter = Counter(
         interaction.outcome
@@ -60,9 +57,7 @@ def build_session_report(
     filenames: set[str] = set()
 
     for interaction in interactions:
-        sources = list_interaction_sources(
-            interaction.id
-        )
+        sources = repository.list_sources(interaction.id)
 
         for source in sources:
             filenames.add(source.filename)

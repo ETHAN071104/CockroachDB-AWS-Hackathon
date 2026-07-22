@@ -9,6 +9,7 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from backend.application.dependencies import get_application_dependencies
 from backend.llm.factory import create_chat_model
 from backend.rag.config import LLM_PROVIDER
 from backend.rag.intelligence_store import (
@@ -18,15 +19,11 @@ from backend.rag.intelligence_store import (
     TopicSourcePair,
     cache_is_stale,
     fingerprint_for_scope,
-    get_cached_intelligence,
-    get_topic,
-    list_topics,
-    replace_cached_intelligence,
-    replace_topics_for_scope,
 )
 from backend.rag.notebooks import get_document_record
 from backend.rag.scope import RetrievalScope, ResolvedRetrievalScope, resolve_retrieval_scope
 from backend.rag.vector_store import get_vector_store
+from backend.repositories.chroma import ChromaDocumentVectorRepository
 
 
 SummaryKind = Literal["document", "notebook", "topic"]
@@ -282,10 +279,10 @@ def generate_summary(kind: SummaryKind, scope_id: int | str) -> SummaryView:
     target = f"{kind} {scope_id}"
     summary = _generate_hierarchical_summary(target, sources)
     snapshot = [source.snapshot() for source in sources]
-    cached = replace_cached_intelligence(
-        cache_kind,
-        scope_kind,
-        scope_key,
+    cached = get_application_dependencies().intelligence.replace_cached(
+        kind=cache_kind,
+        scope_kind=scope_kind,
+        scope_key=scope_key,
         result=summary.model_dump(mode="json"),
         source_snapshot=snapshot,
         fingerprint=fingerprint,
@@ -298,7 +295,11 @@ def get_cached_summary(
     scope_id: int | str,
 ) -> SummaryView | None:
     cache_kind, scope_kind, scope_key, _scope = _summary_identity(kind, scope_id)
-    cached = get_cached_intelligence(cache_kind, scope_kind, scope_key)
+    cached = get_application_dependencies().intelligence.get_cached(
+        cache_kind,
+        scope_kind,
+        scope_key,
+    )
     if cached is None:
         return None
     try:
@@ -355,17 +356,17 @@ def extract_topics(scope: RetrievalScope) -> list[TopicView]:
             )
         )
 
-    stored_topics = replace_topics_for_scope(
-        scope_kind,
-        scope_key,
-        topic_inputs,
+    stored_topics = get_application_dependencies().intelligence.replace_topics(
+        scope_kind=scope_kind,
+        scope_key=scope_key,
+        topics=topic_inputs,
         fingerprint=fingerprint,
     )
     return [_topic_view(topic) for topic in stored_topics]
 
 
 def get_topic_view(topic_id: str) -> TopicView | None:
-    topic = get_topic(topic_id)
+    topic = get_application_dependencies().intelligence.get_topic(topic_id)
     return _topic_view(topic) if topic is not None else None
 
 
@@ -377,7 +378,7 @@ def list_topic_views(
 ) -> list[TopicView]:
     return [
         _topic_view(topic)
-        for topic in list_topics(
+        for topic in get_application_dependencies().intelligence.list_topics(
             search=search,
             scope_kind=scope_kind,
             scope_key=scope_key,
@@ -394,29 +395,19 @@ def collect_evidence(
     if resolved.is_empty:
         return []
 
-    vector_store = get_vector_store()
-    arguments: dict[str, Any] = {
-        "include": ["documents", "metadatas"],
-    }
-    if resolved.chroma_filter is not None:
-        arguments["where"] = resolved.chroma_filter
     try:
-        raw = vector_store.get(**arguments)
-    except TypeError:
-        arguments.pop("include", None)
-        raw = vector_store.get(**arguments)
-
-    documents = list(raw.get("documents") or [])
-    metadatas = list(raw.get("metadatas") or [])
-    if len(documents) != len(metadatas):
+        chunks = ChromaDocumentVectorRepository(get_vector_store).list_chunks(
+            resolved.chroma_filter
+        )
+    except ValueError as error:
         raise IntelligenceGenerationError(
             "Indexed source metadata is incomplete."
-        )
+        ) from error
 
     prepared: list[tuple[tuple[Any, ...], dict[str, Any], str]] = []
-    for raw_text, raw_metadata in zip(documents, metadatas, strict=True):
-        text = str(raw_text or "").strip()
-        metadata = dict(raw_metadata or {})
+    for chunk in chunks:
+        text = chunk.page_content.strip()
+        metadata = dict(chunk.metadata)
         document_id = _positive_metadata_int(metadata.get("document_id"))
         chunk_index = _nonnegative_metadata_int(metadata.get("chunk_index"))
         if not text or document_id is None or chunk_index is None:
@@ -449,8 +440,10 @@ def collect_evidence(
         document_id = int(metadata["document_id"])
         if document_id not in document_memberships:
             record = get_document_record(document_id)
+            if record is None:
+                continue
             document_memberships[document_id] = (
-                record.notebook_id if record is not None else None
+                record.notebook_id
             )
         filename = str(metadata.get("filename") or "Unknown file")
         mime_type = str(metadata.get("mime_type") or "application/octet-stream")

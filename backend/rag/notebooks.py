@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from backend.domain import DEFAULT_WORKSPACE_ID
 from backend.rag.database import get_connection, initialize_database
 
 
@@ -59,6 +60,8 @@ def initialize_notebook_database() -> None:
 def create_notebook(
     name: str,
     description: str = "",
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> Notebook:
     normalized_name = _normalize_name(name)
     normalized_description = _normalize_description(description)
@@ -69,14 +72,16 @@ def create_notebook(
             cursor = connection.execute(
                 """
                 INSERT INTO notebooks (
+                    workspace_id,
                     name,
                     description,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
+                    workspace_id,
                     normalized_name,
                     normalized_description,
                     timestamp,
@@ -92,13 +97,17 @@ def create_notebook(
     if notebook_id is None:
         raise RuntimeError("SQLite did not return a notebook ID.")
 
-    notebook = get_notebook(int(notebook_id))
+    notebook = get_notebook(int(notebook_id), workspace_id=workspace_id)
     if notebook is None:
         raise RuntimeError("Created notebook could not be loaded.")
     return notebook
 
 
-def get_notebook(notebook_id: int) -> Notebook | None:
+def get_notebook(
+    notebook_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> Notebook | None:
     with get_connection() as connection:
         row = connection.execute(
             """
@@ -112,23 +121,28 @@ def get_notebook(notebook_id: int) -> Notebook | None:
             FROM notebooks AS n
             LEFT JOIN notebook_documents AS nd
                 ON nd.notebook_id = n.id
-            WHERE n.id = ?
+            WHERE n.id = ? AND n.workspace_id = ?
             GROUP BY n.id
             """,
-            (notebook_id,),
+            (notebook_id, workspace_id),
         ).fetchone()
 
     return _notebook_from_row(row) if row is not None else None
 
 
-def list_notebooks(search: str | None = None) -> list[Notebook]:
-    parameters: list[object] = []
-    where_clause = ""
+def list_notebooks(
+    search: str | None = None,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> list[Notebook]:
+    parameters: list[object] = [workspace_id]
+    where_clause = "WHERE n.workspace_id = ?"
     if search is not None and search.strip():
         pattern = _literal_like_pattern(search.strip())
         where_clause = (
-            "WHERE n.name LIKE ? ESCAPE '\\' COLLATE NOCASE "
-            "OR n.description LIKE ? ESCAPE '\\' COLLATE NOCASE"
+            "WHERE n.workspace_id = ? AND ("
+            "n.name LIKE ? ESCAPE '\\' COLLATE NOCASE "
+            "OR n.description LIKE ? ESCAPE '\\' COLLATE NOCASE)"
         )
         parameters.extend((pattern, pattern))
 
@@ -160,6 +174,7 @@ def update_notebook(
     *,
     name: str | None = None,
     description: str | None = None,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> Notebook:
     assignments: list[str] = []
     parameters: list[object] = []
@@ -172,7 +187,7 @@ def update_notebook(
         parameters.append(_normalize_description(description))
 
     if not assignments:
-        notebook = get_notebook(notebook_id)
+        notebook = get_notebook(notebook_id, workspace_id=workspace_id)
         if notebook is None:
             raise NotebookNotFoundError(
                 f"Notebook ID {notebook_id} does not exist."
@@ -182,6 +197,7 @@ def update_notebook(
     assignments.append("updated_at = ?")
     parameters.append(_utc_now())
     parameters.append(notebook_id)
+    parameters.append(workspace_id)
 
     try:
         with get_connection() as connection:
@@ -189,7 +205,7 @@ def update_notebook(
                 f"""
                 UPDATE notebooks
                 SET {', '.join(assignments)}
-                WHERE id = ?
+                WHERE id = ? AND workspace_id = ?
                 """,
                 parameters,
             )
@@ -203,13 +219,17 @@ def update_notebook(
             f'Notebook "{attempted_name}" already exists.'
         ) from exc
 
-    notebook = get_notebook(notebook_id)
+    notebook = get_notebook(notebook_id, workspace_id=workspace_id)
     if notebook is None:
         raise RuntimeError("Updated notebook could not be loaded.")
     return notebook
 
 
-def delete_notebook(notebook_id: int) -> bool:
+def delete_notebook(
+    notebook_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> bool:
     """Delete an existing notebook only when it has no documents."""
     with get_connection() as connection:
         row = connection.execute(
@@ -220,10 +240,10 @@ def delete_notebook(notebook_id: int) -> bool:
             FROM notebooks AS n
             LEFT JOIN notebook_documents AS nd
                 ON nd.notebook_id = n.id
-            WHERE n.id = ?
+            WHERE n.id = ? AND n.workspace_id = ?
             GROUP BY n.id
             """,
-            (notebook_id,),
+            (notebook_id, workspace_id),
         ).fetchone()
 
         if row is None:
@@ -234,8 +254,8 @@ def delete_notebook(notebook_id: int) -> bool:
             )
 
         cursor = connection.execute(
-            "DELETE FROM notebooks WHERE id = ?",
-            (notebook_id,),
+            "DELETE FROM notebooks WHERE id = ? AND workspace_id = ?",
+            (notebook_id, workspace_id),
         )
         return cursor.rowcount > 0
 
@@ -243,21 +263,23 @@ def delete_notebook(notebook_id: int) -> bool:
 def assign_document_to_notebook(
     document_id: int,
     notebook_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> DocumentRecord:
     """Assign or move a document without changing its vector data."""
     timestamp = _utc_now()
 
     with get_connection() as connection:
-        _require_document(connection, document_id)
-        _require_notebook(connection, notebook_id)
+        _require_document(connection, document_id, workspace_id)
+        _require_notebook(connection, notebook_id, workspace_id)
 
         existing = connection.execute(
             """
             SELECT notebook_id
             FROM notebook_documents
-            WHERE document_id = ?
+            WHERE document_id = ? AND workspace_id = ?
             """,
-            (document_id,),
+            (document_id, workspace_id),
         ).fetchone()
         previous_notebook_id = (
             int(existing["notebook_id"])
@@ -269,16 +291,17 @@ def assign_document_to_notebook(
             connection.execute(
                 """
                 INSERT INTO notebook_documents (
+                    workspace_id,
                     document_id,
                     notebook_id,
                     assigned_at
                 )
-                VALUES (?, ?, ?)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT(document_id) DO UPDATE SET
                     notebook_id = excluded.notebook_id,
                     assigned_at = excluded.assigned_at
                 """,
-                (document_id, notebook_id, timestamp),
+                (workspace_id, document_id, notebook_id, timestamp),
             )
             _touch_notebook(connection, notebook_id, timestamp)
             if previous_notebook_id is not None:
@@ -288,22 +311,26 @@ def assign_document_to_notebook(
                     timestamp,
                 )
 
-    record = get_document_record(document_id)
+    record = get_document_record(document_id, workspace_id=workspace_id)
     if record is None:
         raise RuntimeError("Assigned document could not be loaded.")
     return record
 
 
-def remove_document_from_notebook(document_id: int) -> bool:
+def remove_document_from_notebook(
+    document_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> bool:
     with get_connection() as connection:
-        _require_document(connection, document_id)
+        _require_document(connection, document_id, workspace_id)
         row = connection.execute(
             """
             SELECT notebook_id
             FROM notebook_documents
-            WHERE document_id = ?
+            WHERE document_id = ? AND workspace_id = ?
             """,
-            (document_id,),
+            (document_id, workspace_id),
         ).fetchone()
         if row is None:
             return False
@@ -312,33 +339,42 @@ def remove_document_from_notebook(document_id: int) -> bool:
         cursor = connection.execute(
             """
             DELETE FROM notebook_documents
-            WHERE document_id = ?
+            WHERE document_id = ? AND workspace_id = ?
             """,
-            (document_id,),
+            (document_id, workspace_id),
         )
         _touch_notebook(connection, notebook_id, _utc_now())
         return cursor.rowcount > 0
 
 
-def get_document_notebook_id(document_id: int) -> int | None:
+def get_document_notebook_id(
+    document_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> int | None:
     with get_connection() as connection:
-        _require_document(connection, document_id)
+        _require_document(connection, document_id, workspace_id)
         row = connection.execute(
             """
             SELECT notebook_id
             FROM notebook_documents
-            WHERE document_id = ?
+            WHERE document_id = ? AND workspace_id = ?
             """,
-            (document_id,),
+            (document_id, workspace_id),
         ).fetchone()
 
     return int(row["notebook_id"]) if row is not None else None
 
 
-def get_document_record(document_id: int) -> DocumentRecord | None:
+def get_document_record(
+    document_id: int,
+    *,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> DocumentRecord | None:
     records = _query_document_records(
         where_clauses=["d.id = ?"],
         parameters=[document_id],
+        workspace_id=workspace_id,
     )
     return records[0] if records else None
 
@@ -348,6 +384,7 @@ def list_document_records(
     notebook_id: int | None = None,
     unsorted_only: bool = False,
     search: str | None = None,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[DocumentRecord]:
     """List global, notebook-scoped, or virtual Unsorted documents."""
     if notebook_id is not None and unsorted_only:
@@ -360,7 +397,7 @@ def list_document_records(
 
     if notebook_id is not None:
         with get_connection() as connection:
-            _require_notebook(connection, notebook_id)
+            _require_notebook(connection, notebook_id, workspace_id)
         where_clauses.append("nd.notebook_id = ?")
         parameters.append(notebook_id)
     elif unsorted_only:
@@ -375,6 +412,7 @@ def list_document_records(
     return _query_document_records(
         where_clauses=where_clauses,
         parameters=parameters,
+        workspace_id=workspace_id,
     )
 
 
@@ -383,6 +421,7 @@ def search_document_records(
     *,
     notebook_id: int | None = None,
     unsorted_only: bool = False,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[DocumentRecord]:
     normalized_query = query.strip()
     if not normalized_query:
@@ -391,10 +430,13 @@ def search_document_records(
         notebook_id=notebook_id,
         unsorted_only=unsorted_only,
         search=normalized_query,
+        workspace_id=workspace_id,
     )
 
 
-def count_documents_by_notebook() -> dict[int | None, int]:
+def count_documents_by_notebook(
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> dict[int | None, int]:
     """Return every notebook count plus virtual Unsorted under None."""
     with get_connection() as connection:
         rows = connection.execute(
@@ -405,8 +447,10 @@ def count_documents_by_notebook() -> dict[int | None, int]:
             FROM notebooks AS n
             LEFT JOIN notebook_documents AS nd
                 ON nd.notebook_id = n.id
+            WHERE n.workspace_id = ?
             GROUP BY n.id
-            """
+            """,
+            (workspace_id,),
         ).fetchall()
         unsorted_row = connection.execute(
             """
@@ -414,8 +458,9 @@ def count_documents_by_notebook() -> dict[int | None, int]:
             FROM documents AS d
             LEFT JOIN notebook_documents AS nd
                 ON nd.document_id = d.id
-            WHERE nd.document_id IS NULL
-            """
+            WHERE d.workspace_id = ? AND nd.document_id IS NULL
+            """,
+            (workspace_id,),
         ).fetchone()
 
     counts: dict[int | None, int] = {
@@ -430,11 +475,14 @@ def count_documents_by_notebook() -> dict[int | None, int]:
     return counts
 
 
-def count_notebook_documents(notebook_id: int | None) -> int:
+def count_notebook_documents(
+    notebook_id: int | None,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> int:
     if notebook_id is None:
-        return count_documents_by_notebook().get(None, 0)
+        return count_documents_by_notebook(workspace_id).get(None, 0)
 
-    counts = count_documents_by_notebook()
+    counts = count_documents_by_notebook(workspace_id)
     if notebook_id not in counts:
         raise NotebookNotFoundError(
             f"Notebook ID {notebook_id} does not exist."
@@ -446,7 +494,10 @@ def _query_document_records(
     *,
     where_clauses: list[str],
     parameters: list[object],
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> list[DocumentRecord]:
+    where_clauses = ["d.workspace_id = ?", *where_clauses]
+    parameters = [workspace_id, *parameters]
     where_sql = (
         f"WHERE {' AND '.join(where_clauses)}"
         if where_clauses
@@ -549,10 +600,11 @@ def _literal_like_pattern(value: str) -> str:
 def _require_notebook(
     connection: sqlite3.Connection,
     notebook_id: int,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     row = connection.execute(
-        "SELECT 1 FROM notebooks WHERE id = ?",
-        (notebook_id,),
+        "SELECT 1 FROM notebooks WHERE id = ? AND workspace_id = ?",
+        (notebook_id, workspace_id),
     ).fetchone()
     if row is None:
         raise NotebookNotFoundError(
@@ -563,10 +615,11 @@ def _require_notebook(
 def _require_document(
     connection: sqlite3.Connection,
     document_id: int,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> None:
     row = connection.execute(
-        "SELECT 1 FROM documents WHERE id = ?",
-        (document_id,),
+        "SELECT 1 FROM documents WHERE id = ? AND workspace_id = ?",
+        (document_id, workspace_id),
     ).fetchone()
     if row is None:
         raise DocumentNotFoundError(
