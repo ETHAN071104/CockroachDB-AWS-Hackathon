@@ -2,145 +2,95 @@
 
 Date: 2026-07-22
 
-Overall migration status: WAITING FOR EXPLICIT LIVE-SCHEMA AUTHORIZATION
+Overall migration status: PASS
 
-The CockroachDB backend, schema revisions, migration tooling, source validation, and local regression verification are implemented. The live cluster is reachable and still contains zero public tables. The permanent `0001` schema creation was not executed because the safety approval layer requires a new explicit user confirmation after an earlier instruction said not to run migrations. No source SQLite or Chroma data was changed.
+The staged CockroachDB migration, targeted runtime citation-lineage repair, and post-fix regression are complete. The live database is at Alembic revision `0002_cockroach_vector_indexes`. The repository-root `.env` remains on `PERSISTENCE_BACKEND=sqlite`; no permanent runtime cutover was performed and no credential is recorded in this report.
 
-## Architecture before and after
+## Final gate results
 
-Before, relational application data lived in SQLite and document/learner-memory vectors lived in two Chroma collections. Durable workflow, LearningSignal, AdaptationEvent, and vector outbox records were local SQLite state.
+| Gate | Result | Sanitized evidence |
+|---|---|---|
+| Cloud preflight | PASS | TLS `verify-full`; CockroachDB CCL v26.2.1; VECTOR capabilities; SQLAlchemy/Alembic connectivity; required permissions |
+| Revision 0001 | PASS | 24 application tables, UUID primary keys, workspace ownership constraints, foreign keys, and non-vector indexes verified |
+| Source import | PASS | Complete 85-object baseline; 84/84 migration items; 28 deterministic mappings; blob bytes and 26 imported vectors matched |
+| Dual-read comparison | PASS | Baseline document and memory samples had top-1 identity match and top-k overlap 1.0; isolation checks passed |
+| Revision 0002 | PASS | Both workspace-prefixed cosine vector indexes exist and representative queries passed |
+| Runtime citation fix | PASS | Runtime quiz citations now resolve exactly one owned chunk and persist `document_chunk_id` in the quiz transaction; invalid lineage fails and rolls back |
+| Targeted backfill | PASS | Exactly two authorized runtime rows were repaired in one guarded transaction; zero other rows changed |
+| Live regression | PASS | A fresh document-backed quiz citation immediately stored the correct chunk UUID and remained correct after restart |
+| Final verification | PASS | Verification, dual-read comparison, vector-index verification, backend/frontend tests, credential scan, and diff checks passed |
 
-The selectable target uses CockroachDB for:
+## Targeted citation repair
 
-- all relational records behind the existing repository protocols;
-- uploaded bytes through `BlobStorage` and CockroachDB `BYTES` compatibility storage;
-- `document_chunks.embedding VECTOR(384)`;
-- one-to-one `learner_memory_embeddings.embedding VECTOR(384)`;
-- durable workflow state, embedding jobs, LearningSignal, and AdaptationEvent records;
-- cosine vector retrieval filtered by workspace.
+The dry run selected exactly two rows with non-null `document_id` and `chunk_index` but null `document_chunk_id`. Both were the preserved Gate 6/7 runtime rows, both had exactly one workspace-owned chunk match, and no source content was emitted.
 
-`PERSISTENCE_BACKEND=sqlite` remains the configured default. Selecting `cockroach` requires `DATABASE_URL` and does not silently fall back.
+The apply step used one transaction, parameterized SQL, exact citation UUID guards, the still-null condition, and workspace/document/chunk equality guards. It required exactly two returned rows and rechecked the original six imported citations before commit.
 
-## Schema
+| Citation ID | Resolved chunk ID | Result |
+|---|---|---|
+| `2a33dad9-95c4-4058-ab23-15b008cb6c85` | `cf5a3c78-3925-5fdd-9c54-fb16f8f6387c` | repaired and verified |
+| `942cd1a9-1f16-4453-b3b0-9d845f2cb9f1` | `7e99ffeb-3a64-5165-8dc1-6e2301ee40ad` | repaired and verified |
 
-Alembic revision `0001_agentbook_cockroach_schema` defines normalized tables for workspaces, the document/notebook library, blobs, caches/topics/citations, study sessions/interactions, quizzes/questions/citations, learner memories/relationships, workflows, learning signals, adaptation events, embedding jobs, and migration bookkeeping. Records use application-generated UUID primary keys. Imported integer identities use deterministic UUIDv5 mappings, retain `legacy_sqlite_id`, and expose their original integer through workspace-scoped `public_id` compatibility fields.
+No broad update, delete, table recreation, Alembic rerun, or data-migration rerun occurred. The six imported citations remained unchanged. After the fresh live regression, all 9 current `quiz_question_sources` rows have valid expected lineage.
 
-Revision `0002_cockroach_vector_indexes` is intentionally deferred until vectors have been imported and verified.
+## Preserved migration baseline
 
-## Repository adapters
+The SQLite/Chroma source fingerprint remains `401b389c323c1fd8358940aef6af1ef22821617a0728359a13ed21c95d8f8f43`. The source contains 85 objects and zero validation exceptions.
 
-CockroachDB implementations exist for:
+| Entity | Imported baseline | Final live count |
+|---|---:|---:|
+| workspaces | 1 | 1 |
+| notebooks | 1 | 1 |
+| documents / blobs | 1 / 1 | 2 / 2 |
+| notebook assignments | 1 | 1 |
+| document chunks / embeddings | 22 | 23 |
+| study sessions / interactions / sources | 2 / 1 / 5 | 2 / 1 / 5 |
+| quiz attempts / questions / sources | 2 / 6 / 6 | 5 / 9 / 9 |
+| learning signals | 4 | 7 |
+| learner memories / embeddings / relationships | 4 / 4 / 0 | 7 / 7 / 0 |
+| workflow states | 8 | 20 |
+| adaptation events | 12 | 18 |
+| embedding jobs | 4 | 8 |
+| cached intelligence / topics / topic sources | 0 / 0 / 0 | 0 / 0 / 0 |
 
-- WorkspaceRepository
-- NotebookRepository
-- DocumentRepository
-- BlobStorage
-- IntelligenceRepository
-- DashboardRepository
-- StudySessionRepository
-- QuizRepository
-- LearnerMemoryRepository
-- LearningSignalRepository
-- WorkflowStateRepository
-- AdaptationEventRepository
-- DocumentVectorRepository
-- MemoryVectorRepository
-- VectorOutboxRepository
-- UnitOfWork
+The final live application-object count is 128. The 43 records above the 85-object baseline are the authorized Gate 6/7 and final regression records. The targeted two-row backfill changed only lineage UUID values and did not change record counts.
 
-FastAPI startup, health, export, integrity, retrieval scope, intelligence fingerprints, library routes, study routes, reports, and CLI repository-backed workflows choose the backend through the dependency container. In Cockroach mode, startup does not initialize SQLite or probe Chroma.
+## Verification evidence
 
-## UnitOfWork and retry behavior
+- Alembic revision: `0002_cockroach_vector_indexes`.
+- Migration items: 84 expected, 84 actual, zero mismatches, zero unexpected.
+- Source fingerprint: matched; SQLite and Chroma were unchanged.
+- Imported vectors: 26 checked at dimension 384; maximum absolute delta 0; zero mismatches.
+- Current citation-lineage mismatches: zero for quiz, study-interaction, and topic sources.
+- Workspace and referential orphan checks: zero.
+- Original imported quiz citations: 6/6 unchanged.
+- Repaired citations: 2/2 point to their expected owned chunks.
+- Fresh runtime citation: correct immediately and after backend restart.
+- Vector indexes: `idx_document_chunks_workspace_embedding` and `idx_memory_embeddings_workspace_embedding` both exist.
+- Cockroach mode live tests used failure sentinels for SQLite and Chroma; neither source was accessed.
 
-`CockroachUnitOfWork.run()` detects SQLSTATE `40001`, rolls back, creates a fresh transaction, and retries with a bounded exponential backoff plus jitter. It exposes `retry_count` and re-raises the original serialization exception after exhaustion. Logs contain only the SQLSTATE and attempt number.
+Live `EXPLAIN` did not select the vector indexes on the small final dataset of 23 document vectors and 7 memory vectors. The definitions and query shapes are valid and live retrieval passed, but optimizer index use is not claimed.
 
-Document parsing, model calls, and embedding generation are outside retryable callbacks. Relational source changes and embedding jobs commit together. Post-commit processing performs embeddings, while `python -m backend.infrastructure.reconcile_vectors` retries pending, failed, or interrupted jobs.
+## Test results
 
-## Document and learner-memory vector design
+- Python compilation: PASS.
+- Complete backend suite: 91 passed, 5 conditionally skipped.
+- Cockroach repository and live citation-lineage suite: 8 passed.
+- Controlled live CockroachDB Agentic Learning Loop: 1 passed.
+- Frontend Vitest suite: 7 files, 19 tests passed.
+- Frontend production build: PASS.
+- Migration verification: PASS.
+- Dual-read comparison: PASS.
+- Vector-index verification: PASS.
+- Credential scan: PASS.
+- `git diff --check`: PASS.
 
-Document vectors are stored with content, full citation lineage, metadata JSONB, model/version, content hash, and `VECTOR(384)`. Query scopes cover global/workspace, notebook-derived document IDs, explicit document IDs, and exact topic `(document_id, chunk_index)` pairs. Queries use cosine distance `<=>`, top-k limits, and deterministic document/chunk tie ordering.
+The safe TXT smoke test had already exercised the same upload and quiz path with deterministic model/embedding stubs, so it was not rerun after the fresh live quiz regression. The final live loop created 13 additional durable test records; these are included in the 128-record total.
 
-Learner memory uses a separate one-to-one embedding table so embedding lifecycle/model changes do not rewrite the memory record. Retrieval joins the memory owner, filters the workspace and active status, orders by cosine distance, and updates retrieval counters.
+## Scope and runtime state
 
-## Distributed Vector Index definitions
-
-```sql
-CREATE VECTOR INDEX idx_document_chunks_workspace_embedding
-ON document_chunks (workspace_id, embedding vector_cosine_ops);
-
-CREATE VECTOR INDEX idx_memory_embeddings_workspace_embedding
-ON learner_memory_embeddings (workspace_id, embedding vector_cosine_ops);
-```
-
-The configured dimension is 384 and the application distance operator is `<=>`. Both index definitions and every other migration statement passed the live parser. Index creation and `EXPLAIN` evidence remain pending because permanent schema creation was not authorized.
-
-## Migration tooling and results
-
-Commands implemented:
-
-```powershell
-python -m backend.infrastructure.cockroach.migrate --dry-run
-python -m backend.infrastructure.cockroach.migrate
-python -m backend.infrastructure.cockroach.verify
-```
-
-The importer is non-destructive to its sources, validates both Chroma collections, uses deterministic relationships, records a source fingerprint and migration items, and supports safe reruns with deterministic IDs plus conflict handling.
-
-Actual dry-run source counts:
-
-| Source | Count |
-|---|---:|
-| workspaces | 1 |
-| notebooks | 1 |
-| documents / blobs | 1 / 1 |
-| notebook assignments | 1 |
-| document chunks/vectors | 22 |
-| study sessions / interactions / sources | 2 / 1 / 5 |
-| quiz attempts / questions / sources | 2 / 6 / 6 |
-| learning signals | 4 |
-| learner memories / embeddings / relationships | 4 / 4 / 0 |
-| workflow states | 8 |
-| adaptation events | 12 |
-| legacy vector outbox jobs | 4 |
-| cached intelligence / topics / topic sources | 0 / 0 / 0 |
-
-Dry run result: PASS — 85 source objects validated, zero migration exceptions. All 26 stored embeddings are dimension 384 and unit-normalized (observed norms approximately 0.99999998–1.00000011). Legacy Chroma is configured for L2; for these normalized vectors, L2 and cosine produce equivalent rankings while numeric distance scales differ. The manifest records this conversion policy. The manifest status is `dry_run_passed`. No destination counts exist yet because no live import was allowed.
-
-## Live-cluster evidence
-
-- Repository-root `.env` was used without displaying its connection value.
-- TLS mode: `verify-full`.
-- Live preflight baseline: CockroachDB CCL v26.2.1.
-- Latest public-table count before attempted schema apply: 0.
-- Schema CREATE permission: passed.
-- Full live parser check: 42/42 migration/index statements accepted through `SHOW SYNTAX`.
-- Permanent schema creation: not executed; safety approval rejected the operation pending renewed explicit authorization.
-- Data migration and vector-index creation: not executed.
-
-## Tests actually run
-
-- `python -m compileall -q backend alembic tests`: PASS.
-- Backend `unittest` discovery: PASS — 85 tests, 2 conditional skips.
-- Cockroach retry unit test: PASS, including two simulated `40001` retries with fresh transactions.
-- Cockroach composition test: PASS; no SQLite/Chroma adapter instance is selected.
-- Migration dry run: PASS — 85 validated source objects, zero exceptions.
-- Live `SHOW SYNTAX`: PASS — 42 statements.
-- Frontend Vitest: PASS — 7 files, 19 tests.
-- Frontend production build: PASS — TypeScript and Vite build completed.
-- Live repository contract tests: not run because the schema does not exist.
-- Live Agentic Learning Loop: not run because the schema/data migration does not exist.
-- Dual-read/vector-index usage comparison: not run for the same reason.
-
-## Files changed
-
-The implementation changes configuration/dependencies, repository protocols and adapters, backend composition and business storage boundaries, health/export/integrity/CLI paths, Alembic revisions, migration/verification tooling, tests, README, and the required plan/manifest/exceptions/handoff documents. The frontend source and visual design were not modified.
-
-## Environment variables
-
-Supported persistence variables are `PERSISTENCE_BACKEND`, `DATABASE_URL`, `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW`, `DATABASE_CONNECT_TIMEOUT`, `DATABASE_MAX_TRANSACTION_RETRIES`, `DATABASE_RETRY_BASE_DELAY_MS`, `EMBEDDING_DIMENSION`, `EMBEDDING_MODEL`, and `ENABLE_VECTOR_INDEX`. No real value is present in `.env.example` or this report.
-
-## Remaining limitations and required next action
-
-The current Cockroach file-blob adapter is suitable only as a compatibility boundary for the existing 50 MiB upload ceiling. Object storage, AWS, deployment, authentication, and frontend redesign remain outside scope.
-
-To continue, the user must explicitly authorize creation of permanent Agentbook tables and indexes in the configured live cluster. After authorization, run revision `0001`, live repository/startup tests, the data import, verification and dual-read comparison, revision `0002`, vector `EXPLAIN`, cockroach-mode restart/no-local-write checks, and the full live Agentic Learning Loop. This report must then be updated with those actual results before the migration can be called complete.
+- The repository-root `.env` remains `PERSISTENCE_BACKEND=sqlite`.
+- No SQLite row, Chroma record, or rollback-source file was modified.
+- No permanent table or index was created, altered, or deleted during this repair task.
+- No AWS, S3, deployment, authentication, notifications, or visual-design work was performed.
+- Permanent CockroachDB cutover requires separate authorization.

@@ -7,7 +7,7 @@ from uuid import UUID
 import chromadb
 from sqlalchemy import text
 
-from backend.domain import deterministic_legacy_uuid
+from backend.domain import DEFAULT_WORKSPACE_ID, deterministic_legacy_uuid
 from backend.infrastructure.cockroach.importer import destination_counts
 from backend.infrastructure.cockroach.source import VectorRecord, load_source_snapshot
 from backend.rag import config
@@ -21,13 +21,30 @@ def compare(sample_size: int = 3, top_k: int = 5) -> dict[str, object]:
         raise RuntimeError("Source validation has migration exceptions.")
     counts = destination_counts(get_engine())
     count_matches = {
-        name: counts.get(name) == expected
+        name: counts.get(name, 0) >= expected
         for name, expected in snapshot.counts.items()
     }
     document_results = _compare_documents(snapshot, sample_size, top_k)
     memory_results = _compare_memories(snapshot, sample_size, top_k)
+    lineage = _compare_document_lineage(snapshot)
+    memory_filters = _compare_memory_filters(snapshot)
+    workspace_isolation = _compare_workspace_isolation()
+    relational = _compare_relational_behaviors(snapshot)
+    topic_exact_source = (
+        {"status": "conditionally_skipped", "reason": "Source manifest contains zero topics."}
+        if not snapshot.rows["topics"]
+        else _compare_topic_exact_sources(snapshot)
+    )
     all_samples = [*document_results, *memory_results]
-    passed = all(count_matches.values()) and all(bool(item["accepted"]) for item in all_samples)
+    passed = (
+        all(count_matches.values())
+        and all(bool(item["accepted"]) for item in all_samples)
+        and bool(lineage["passed"])
+        and bool(memory_filters["passed"])
+        and bool(workspace_isolation["passed"])
+        and bool(relational["passed"])
+        and topic_exact_source.get("status") in {"pass", "conditionally_skipped"}
+    )
     return {
         "status": "pass" if passed else "blocked",
         "policy": {
@@ -38,9 +55,14 @@ def compare(sample_size: int = 3, top_k: int = 5) -> dict[str, object]:
                 "scales; unit-normalized embeddings must preserve nearest-neighbor order."
             ),
         },
-        "relational_count_matches": count_matches,
+        "migration_baseline_count_preserved": count_matches,
         "document_samples": document_results,
         "memory_samples": memory_results,
+        "document_page_slide_lineage": lineage,
+        "memory_filtering_and_duplicates": memory_filters,
+        "workspace_isolation": workspace_isolation,
+        "relational_behavior": relational,
+        "topic_exact_source": topic_exact_source,
         "credentials_recorded": False,
         "source_content_recorded": False,
     }
@@ -112,6 +134,7 @@ def _document_scope_comparison(
         if document_ids:
             clause = " AND d.public_id = ANY(:document_ids)"
             parameters["document_ids"] = document_ids
+        baseline_clause = " AND d.legacy_sqlite_id IS NOT NULL"
         with get_engine().connect() as connection:
             rows = connection.execute(
                 text(
@@ -119,7 +142,7 @@ def _document_scope_comparison(
                     SELECT c.id,c.embedding <=> CAST(:embedding AS VECTOR(384)) AS distance
                     FROM document_chunks c JOIN documents d ON d.id=c.document_id
                     WHERE c.workspace_id=:workspace_id
-                    """ + clause + " ORDER BY distance,c.id LIMIT :limit"
+                    """ + baseline_clause + clause + " ORDER BY distance,c.id LIMIT :limit"
                 ),
                 parameters,
             ).mappings().all()
@@ -150,6 +173,7 @@ def _compare_memories(snapshot, sample_size: int, top_k: int):
                     SELECT m.public_id,e.embedding <=> CAST(:embedding AS VECTOR(384)) AS distance
                     FROM learner_memory_embeddings e JOIN learner_memories m ON m.id=e.memory_id
                     WHERE e.workspace_id=:workspace_id AND m.status='active'
+                      AND m.legacy_sqlite_id IS NOT NULL
                     ORDER BY distance,m.public_id LIMIT :limit
                     """
                 ),
@@ -174,6 +198,213 @@ def _comparison(query_id: str, legacy_ids: list[str], target_ids: list[str]):
         "top_1_match": top_one,
         "top_k_overlap": round(overlap, 4),
         "accepted": top_one and overlap >= 0.8,
+    }
+
+
+def _compare_document_lineage(snapshot: SourceSnapshot) -> dict[str, object]:
+    documents = {int(row["id"]): row for row in snapshot.rows["documents"]}
+    with get_engine().connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT c.id,c.page_number,c.slide_number,c.filename_snapshot,c.mime_type "
+                "FROM document_chunks c JOIN documents d ON d.id=c.document_id "
+                "WHERE d.legacy_sqlite_id IS NOT NULL"
+            )
+        ).mappings().all()
+    actual = {str(row["id"]): row for row in rows}
+    mismatches = 0
+    for record in snapshot.document_vectors:
+        owner = documents[int(record.metadata["document_id"])]
+        target_id = deterministic_legacy_uuid(
+            owner["workspace_id"], "document_chunks", record.vector_id
+        )
+        row = actual.get(str(target_id))
+        if row is None:
+            mismatches += 1
+            continue
+        expected_page = record.metadata.get("page_number")
+        expected_slide = record.metadata.get("slide_number")
+        if (
+            row["page_number"] != expected_page
+            or row["slide_number"] != expected_slide
+            or str(row["filename_snapshot"]) != str(record.metadata.get("filename", owner["filename"]))
+            or str(row["mime_type"]) != str(record.metadata.get("mime_type", owner["mime_type"]))
+        ):
+            mismatches += 1
+    return {
+        "passed": mismatches == 0 and len(actual) == len(snapshot.document_vectors),
+        "checked_chunks": len(snapshot.document_vectors),
+        "mismatch_count": mismatches,
+    }
+
+
+def _compare_memory_filters(snapshot: SourceSnapshot) -> dict[str, object]:
+    source = list(snapshot.rows["memories"])
+    source_active = sorted(int(row["id"]) for row in source if row["status"] == "active")
+    source_archived = sorted(int(row["id"]) for row in source if row["status"] == "archived")
+    source_threshold = sorted(
+        int(row["id"])
+        for row in source
+        if float(row["confidence"]) >= 0.5 and float(row["importance"]) >= 0.5
+    )
+    source_duplicates = sorted(
+        str(row["content"]).strip().casefold()
+        for row in source
+        if sum(
+            1 for candidate in source
+            if str(candidate["content"]).strip().casefold() == str(row["content"]).strip().casefold()
+        ) > 1
+    )
+    with get_engine().connect() as connection:
+        target_active = sorted(
+            int(value) for value in connection.execute(
+                text("SELECT public_id FROM learner_memories WHERE status='active' AND legacy_sqlite_id IS NOT NULL")
+            ).scalars()
+        )
+        target_archived = sorted(
+            int(value) for value in connection.execute(
+                text("SELECT public_id FROM learner_memories WHERE status='archived' AND legacy_sqlite_id IS NOT NULL")
+            ).scalars()
+        )
+        target_threshold = sorted(
+            int(value) for value in connection.execute(
+                text(
+                    "SELECT public_id FROM learner_memories "
+                    "WHERE confidence >= 0.5 AND importance >= 0.5 "
+                    "AND legacy_sqlite_id IS NOT NULL"
+                )
+            ).scalars()
+        )
+        duplicate_rows = connection.execute(
+            text(
+                "SELECT lower(trim(content)) AS normalized,count(*) FROM learner_memories "
+                "WHERE legacy_sqlite_id IS NOT NULL "
+                "GROUP BY normalized HAVING count(*) > 1 ORDER BY normalized"
+            )
+        ).all()
+    target_duplicates = sorted(
+        str(normalized)
+        for normalized, count in duplicate_rows
+        for _ in range(int(count))
+    )
+    checks = {
+        "active_filter": source_active == target_active,
+        "archive_filter": source_archived == target_archived,
+        "confidence_importance_filter": source_threshold == target_threshold,
+        "normalized_duplicate_detection": source_duplicates == target_duplicates,
+    }
+    return {
+        "passed": all(checks.values()),
+        "checks": checks,
+        "active_count": len(target_active),
+        "archived_count": len(target_archived),
+        "threshold_match_count": len(target_threshold),
+        "duplicate_count": len(target_duplicates),
+    }
+
+
+def _compare_workspace_isolation() -> dict[str, object]:
+    foreign_workspace = UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
+    tables = (
+        "documents", "document_chunks", "learner_memories",
+        "learner_memory_embeddings", "study_sessions", "quiz_attempts",
+        "learning_signals", "workflow_states", "adaptation_events",
+    )
+    with get_engine().connect() as connection:
+        foreign_counts = {
+            table: int(
+                connection.execute(
+                    text(f"SELECT count(*) FROM {table} WHERE workspace_id=:workspace_id"),
+                    {"workspace_id": foreign_workspace},
+                ).scalar_one()
+            )
+            for table in tables
+        }
+        owned_counts = {
+            table: int(
+                connection.execute(
+                    text(
+                        f"SELECT count(*) FROM {table} "
+                        "WHERE workspace_id != :workspace_id"
+                    ),
+                    {"workspace_id": UUID(DEFAULT_WORKSPACE_ID)},
+                ).scalar_one()
+            )
+            for table in tables
+        }
+    passed = not any(foreign_counts.values()) and not any(owned_counts.values())
+    return {
+        "passed": passed,
+        "foreign_workspace_visible_records": sum(foreign_counts.values()),
+        "records_outside_default_workspace": sum(owned_counts.values()),
+    }
+
+
+def _compare_relational_behaviors(snapshot: SourceSnapshot) -> dict[str, object]:
+    from backend.repositories.cockroach import (
+        CockroachAdaptationEventRepository,
+        CockroachDashboardRepository,
+        CockroachDocumentRepository,
+        CockroachLearnerMemoryRepository,
+        CockroachLearningSignalRepository,
+        CockroachNotebookRepository,
+        CockroachQuizRepository,
+        CockroachStudySessionRepository,
+    )
+
+    dashboard = CockroachDashboardRepository().build(100)
+    expected_dashboard = {
+        "documents": len(snapshot.rows["documents"]),
+        "notebooks": len(snapshot.rows["notebooks"]),
+        "study_sessions": len(snapshot.rows["study_sessions"]),
+        "interactions": len(snapshot.rows["study_interactions"]),
+        "quiz_attempts": len(snapshot.rows["quiz_attempts"]),
+        "topics": len(snapshot.rows["topics"]),
+    }
+    dashboard_matches = all(
+        int(dashboard["counts"][key]) >= value for key, value in expected_dashboard.items()
+    )
+    checks = {
+        "dashboard_totals": dashboard_matches,
+        "notebooks": set(int(row["id"]) for row in snapshot.rows["notebooks"])
+        <= set(item.id for item in CockroachNotebookRepository().list()),
+        "documents": set(int(row["id"]) for row in snapshot.rows["documents"])
+        <= set(item.id for item in CockroachDocumentRepository().list()),
+        "study_sessions": set(int(row["id"]) for row in snapshot.rows["study_sessions"])
+        <= set(item.id for item in CockroachStudySessionRepository().list()),
+        "quiz_reports": set(int(row["id"]) for row in snapshot.rows["quiz_attempts"])
+        <= set(item.id for item in CockroachQuizRepository().list_attempts()),
+        "learning_signals": set(str(row["id"]) for row in snapshot.rows["learning_signals"])
+        <= set(item.id for item in CockroachLearningSignalRepository().list()),
+        "learner_memories": set(int(row["id"]) for row in snapshot.rows["memories"])
+        <= set(item.id for item in CockroachLearnerMemoryRepository().list(True)),
+        "adaptation_events": set(str(row["id"]) for row in snapshot.rows["adaptation_events"])
+        <= set(item.id for item in CockroachAdaptationEventRepository().list()),
+    }
+    with get_engine().connect() as connection:
+        checks["workflow_states"] = set(
+            str(value) for value in connection.execute(text("SELECT id FROM workflow_states")).scalars()
+        ) >= set(str(row["id"]) for row in snapshot.rows["workflow_states"])
+    return {"passed": all(checks.values()), "checks": checks}
+
+
+def _compare_topic_exact_sources(snapshot: SourceSnapshot) -> dict[str, object]:
+    expected = sorted(
+        (str(row["topic_id"]), int(row["source_index"]), int(row["document_id"]), int(row["chunk_index"]))
+        for row in snapshot.rows["topic_sources"]
+    )
+    with get_engine().connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT s.topic_id,s.source_index,d.public_id AS document_id,s.chunk_index "
+                "FROM topic_sources s LEFT JOIN documents d ON d.id=s.document_id"
+            )
+        ).all()
+    actual = sorted((str(topic), int(index), int(document), int(chunk)) for topic, index, document, chunk in rows)
+    return {
+        "status": "pass" if expected == actual else "blocked",
+        "checked": len(expected),
+        "mismatch_count": 0 if expected == actual else 1,
     }
 
 

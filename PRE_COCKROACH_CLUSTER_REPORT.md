@@ -10,18 +10,19 @@ Overall result: PASS
 - `DATABASE_URL` was available but never displayed.
 - `PERSISTENCE_BACKEND=sqlite` was confirmed.
 - TLS `verify-full` connection passed.
-- Live version was CockroachDB CCL v26.2.1.
+- Live version was CockroachDB CCL.
 - `VECTOR(3)` cast passed.
 - Fixed vector-dimension rejection passed.
 - `VECTOR(384)` passed.
 - Vector-index feature was enabled.
-- Cosine vector-index syntax was accepted through `SHOW SYNTAX`.
+- Both proposed cosine vector-index statements were accepted through `SHOW SYNTAX`.
 - SQLAlchemy `cockroachdb+psycopg` connection passed.
-- Alembic `MigrationContext` connection passed.
+- Alembic `MigrationContext` connection passed without applying a revision.
 - Database `CONNECT` permission passed.
 - Schema `USAGE` permission passed.
 - Schema `CREATE` permission passed.
 - Permanent catalog fingerprint was unchanged.
+- Public base-table count observed: 0.
 - No permanent table or index was created, altered, or deleted.
 - No Alembic migration was executed.
 - No data migration was executed.

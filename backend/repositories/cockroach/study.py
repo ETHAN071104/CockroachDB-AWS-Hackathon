@@ -8,6 +8,7 @@ from sqlalchemy import text
 from backend.domain import DEFAULT_WORKSPACE_ID
 from backend.repositories.cockroach.connection import connection_scope
 from backend.repositories.cockroach.helpers import iso, new_public_identity, utc_now, uuid_for_public
+from backend.repositories.interfaces import RepositoryConflictError
 from backend.study.database import (
     ALLOWED_INTERACTION_OUTCOMES,
     StoredInteractionSource,
@@ -18,6 +19,49 @@ from backend.study.database import (
     StoredStudySession,
     validate_quiz_question_inputs,
 )
+
+
+def _resolve_quiz_citation_lineage(
+    connection,
+    workspace_id: str,
+    document_public_id: int,
+    chunk_index: int,
+):
+    document_rows = connection.execute(
+        text(
+            "SELECT id FROM documents "
+            "WHERE workspace_id=:workspace_id AND public_id=:public_id"
+        ),
+        {
+            "workspace_id": UUID(workspace_id),
+            "public_id": int(document_public_id),
+        },
+    ).scalars().all()
+    if len(document_rows) != 1:
+        raise RepositoryConflictError(
+            "Quiz citation document ownership is invalid."
+        )
+    document_uuid = document_rows[0]
+    chunk_rows = connection.execute(
+        text(
+            """
+            SELECT id FROM document_chunks
+            WHERE workspace_id=:workspace_id
+              AND document_id=:document_id
+              AND chunk_index=:chunk_index
+            """
+        ),
+        {
+            "workspace_id": UUID(workspace_id),
+            "document_id": document_uuid,
+            "chunk_index": int(chunk_index),
+        },
+    ).scalars().all()
+    if len(chunk_rows) != 1:
+        raise RepositoryConflictError(
+            "Quiz citation chunk lineage is missing or ambiguous."
+        )
+    return document_uuid, chunk_rows[0]
 
 
 class CockroachStudySessionRepository:
@@ -366,21 +410,38 @@ class CockroachQuizRepository:
                 for source in question.sources:
                     source_uuid, source_public_id = new_public_identity()
                     document_uuid = None
-                    if source.document_id is not None:
-                        document_uuid = uuid_for_public(
-                            "documents", self.workspace_id, int(source.document_id)
+                    document_chunk_uuid = None
+                    if (
+                        source.document_id is None
+                        and source.chunk_index is not None
+                    ) or (
+                        source.document_id is not None
+                        and source.chunk_index is None
+                    ):
+                        raise RepositoryConflictError(
+                            "Quiz citation document and chunk lineage must be supplied together."
+                        )
+                    if source.document_id is not None and source.chunk_index is not None:
+                        document_uuid, document_chunk_uuid = (
+                            _resolve_quiz_citation_lineage(
+                                connection,
+                                self.workspace_id,
+                                int(source.document_id),
+                                int(source.chunk_index),
+                            )
                         )
                     connection.execute(
                         text(
                             """
                             INSERT INTO quiz_question_sources (
                                 id,workspace_id,public_id,question_attempt_id,document_id,
-                                source_index,filename,page_number,chunk_index,distance,
-                                notebook_public_id,mime_type,slide_number,excerpt,created_at
+                                document_chunk_id,source_index,filename,page_number,chunk_index,
+                                distance,notebook_public_id,mime_type,slide_number,excerpt,created_at
                             ) VALUES (
                                 :id,:workspace_id,:public_id,:question_id,:document_id,
-                                :source_index,:filename,:page_number,:chunk_index,:distance,
-                                :notebook_id,:mime_type,:slide_number,:excerpt,:now
+                                :document_chunk_id,:source_index,:filename,:page_number,
+                                :chunk_index,:distance,:notebook_id,:mime_type,:slide_number,
+                                :excerpt,:now
                             )
                             """
                         ),
@@ -390,6 +451,7 @@ class CockroachQuizRepository:
                             "public_id": source_public_id,
                             "question_id": question_uuid,
                             "document_id": document_uuid,
+                            "document_chunk_id": document_chunk_uuid,
                             "source_index": source.source_index,
                             "filename": source.filename.strip(),
                             "page_number": source.page_number,

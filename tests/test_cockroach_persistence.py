@@ -3,11 +3,14 @@ from __future__ import annotations
 import os
 import unittest
 from unittest.mock import patch
+from uuid import UUID
 
 from backend.application.dependencies import build_application_dependencies
 from backend.domain import deterministic_legacy_uuid
 from backend.rag import config
 from backend.repositories.cockroach import CockroachUnitOfWork
+from backend.repositories.cockroach.study import _resolve_quiz_citation_lineage
+from backend.repositories.interfaces import RepositoryConflictError
 
 
 class _SerializationFailure(RuntimeError):
@@ -48,7 +51,64 @@ class _Engine:
         return connection
 
 
+class _ScalarRows:
+    def __init__(self, values) -> None:
+        self.values = values
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self.values)
+
+
+class _LineageConnection:
+    def __init__(self, responses) -> None:
+        self.responses = list(responses)
+        self.parameters = []
+
+    def execute(self, _statement, parameters):
+        self.parameters.append(parameters)
+        return _ScalarRows(self.responses.pop(0))
+
+
 class CockroachPersistenceUnitTest(unittest.TestCase):
+    def test_quiz_citation_lineage_requires_one_owned_chunk(self) -> None:
+        workspace = "00000000-0000-4000-8000-000000000001"
+        document_id = UUID("10000000-0000-4000-8000-000000000001")
+        chunk_id = UUID("20000000-0000-4000-8000-000000000001")
+        connection = _LineageConnection(([document_id], [chunk_id]))
+
+        resolved = _resolve_quiz_citation_lineage(
+            connection, workspace, document_public_id=17, chunk_index=3
+        )
+
+        self.assertEqual(resolved, (document_id, chunk_id))
+        self.assertEqual(connection.parameters[0]["workspace_id"], UUID(workspace))
+        self.assertEqual(connection.parameters[1]["document_id"], document_id)
+        self.assertEqual(connection.parameters[1]["chunk_index"], 3)
+
+    def test_quiz_citation_lineage_rejects_missing_or_cross_workspace_document(self) -> None:
+        connection = _LineageConnection(([],))
+        with self.assertRaises(RepositoryConflictError):
+            _resolve_quiz_citation_lineage(
+                connection,
+                "00000000-0000-4000-8000-000000000099",
+                document_public_id=1,
+                chunk_index=0,
+            )
+
+    def test_quiz_citation_lineage_rejects_missing_or_ambiguous_chunk(self) -> None:
+        workspace = "00000000-0000-4000-8000-000000000001"
+        document_id = UUID("10000000-0000-4000-8000-000000000001")
+        for chunks in ([], [UUID(int=1), UUID(int=2)]):
+            with self.subTest(chunk_count=len(chunks)):
+                connection = _LineageConnection(([document_id], chunks))
+                with self.assertRaises(RepositoryConflictError):
+                    _resolve_quiz_citation_lineage(
+                        connection, workspace, document_public_id=1, chunk_index=99
+                    )
+
     def test_legacy_uuid_is_deterministic_and_table_scoped(self) -> None:
         workspace = "00000000-0000-4000-8000-000000000001"
         first = deterministic_legacy_uuid(workspace, "documents", 17)

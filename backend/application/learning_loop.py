@@ -13,7 +13,8 @@ from backend.memory.proposals import (
     PendingMemoryProposal,
     create_or_update_signal_memory_proposal,
 )
-from backend.memory.service import update_memory
+from backend.memory.service import search_memories, update_memory
+from backend.rag import config
 
 
 SUPPORTED_SIGNAL_TYPES = frozenset(
@@ -289,7 +290,7 @@ def build_adaptation_context(workflow_type: str, topic: str = "") -> AdaptationC
         for signal in dependencies.learning_signals.list()
         if signal.status in {"active", "improving"}
     ]
-    memories = [
+    active_memories = [
         memory
         for memory in dependencies.memories.list()
         if memory.status == "active"
@@ -303,9 +304,23 @@ def build_adaptation_context(workflow_type: str, topic: str = "") -> AdaptationC
         for signal in signals
         if relevant(signal.topic + " " + signal.statement)
     ][:5]
-    selected_memories = [
-        memory for memory in memories if relevant(memory.content)
-    ][:5]
+    if (
+        config.PERSISTENCE_BACKEND == "cockroach"
+        and topic.strip()
+        and active_memories
+    ):
+        semantic_matches = search_memories(topic, k=5)
+        selected_memories = [
+            memory
+            for match in semantic_matches
+            if (memory := dependencies.memories.get(match.memory_id)) is not None
+            and memory.status == "active"
+            and relevant(memory.content)
+        ]
+    else:
+        selected_memories = [
+            memory for memory in active_memories if relevant(memory.content)
+        ][:5]
     has_weakness = any(
         signal.signal_type in WEAKNESS_SIGNAL_TYPES for signal in selected_signals
     )

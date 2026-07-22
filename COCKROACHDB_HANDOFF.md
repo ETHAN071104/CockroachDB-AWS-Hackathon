@@ -2,109 +2,65 @@
 
 Date: 2026-07-22
 
-Current state: implementation and dry run pass; live permanent schema/data migration awaits renewed explicit authorization.
+Current state: PASS. The live schema and data are at revision `0002_cockroach_vector_indexes`; the runtime quiz citation defect is fixed, the two authorized preserved rows are repaired, and final verification is complete.
 
-## Required environment
+The repository-root `.env` intentionally remains on `PERSISTENCE_BACKEND=sqlite`. A permanent CockroachDB cutover requires separate authorization.
 
-Set the following only in the repository-root `.env` or the deployment secret manager:
+## Completed work
 
-```dotenv
-PERSISTENCE_BACKEND=sqlite
-DATABASE_URL=
-DATABASE_POOL_SIZE=5
-DATABASE_MAX_OVERFLOW=5
-DATABASE_CONNECT_TIMEOUT=15
-DATABASE_MAX_TRANSACTION_RETRIES=5
-DATABASE_RETRY_BASE_DELAY_MS=100
-EMBEDDING_DIMENSION=384
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-ENABLE_VECTOR_INDEX=true
-```
+- CockroachDB Cloud preflight passed with TLS `verify-full` against CockroachDB CCL v26.2.1.
+- Revisions `0001_agentbook_cockroach_schema` and `0002_cockroach_vector_indexes` were applied and verified in the previously authorized migration stages.
+- The complete 85-object SQLite/Chroma baseline was imported with zero migration exceptions.
+- All 84 migration items, 28 deterministic mappings, workspace ownership checks, foreign keys, blob bytes, six imported quiz citations, and 26 imported vectors match.
+- Both cosine vector indexes exist and live document/memory retrieval and workspace isolation pass.
+- CockroachDB startup, health, dashboard, restart, durable workflows, semantic memory retrieval, controlled Agentic Learning Loop, and safe TXT smoke passed.
+- Runtime quiz citation insertion now resolves the chunk by workspace, document public ID, and chunk index, requires exactly one owned match, and persists `document_chunk_id` in the same transaction.
+- Missing, ambiguous, partial, and cross-workspace lineage fails safely and rolls back.
+- Exactly two authorized runtime citations were repaired in one guarded transaction; no other row changed.
+- A fresh live citation stored the correct chunk UUID immediately and remained correct after restart.
+- All 9 current quiz citations have valid lineage; the six imported citations remain unchanged.
+- The SQLite/Chroma fingerprint remains `401b389c323c1fd8358940aef6af1ef22821617a0728359a13ed21c95d8f8f43` with 85 source objects and zero validation exceptions.
 
-Use a CockroachDB connection string with `sslmode=verify-full`. Never paste it into source, reports, commands that echo environment values, CI logs, screenshots, or issue trackers.
+## Final live state
 
-## Safe connection and schema sequence
+The live destination contains 128 application records: the verified 85-object migration baseline plus 43 authorized runtime-test records. The final lineage mismatch count, referential orphan count, workspace orphan count, migration-item mismatch count, and imported-vector mismatch count are all zero.
 
-From the repository root:
+The final regression added 13 durable records: one quiz attempt, question, citation, signal, memory, memory embedding, and embedding job; four workflow states; and two adaptation events. The TXT upload was not repeated because the fresh quiz regression directly verified the repaired runtime path.
+
+## Verification commands
+
+These final checks passed:
 
 ```powershell
-python -m backend.infrastructure.cockroach.migration_runner preflight
-python -m backend.infrastructure.cockroach.migrate --dry-run
-python -m backend.infrastructure.cockroach.migration_runner upgrade 0001_agentbook_cockroach_schema
-python -m backend.infrastructure.cockroach.migrate
 python -m backend.infrastructure.cockroach.verify
 python -m backend.infrastructure.cockroach.compare
-python -m backend.infrastructure.cockroach.migration_runner upgrade head
-python -m backend.infrastructure.cockroach.verify
+python -m backend.infrastructure.cockroach.vector_index_verify
+python -m compileall -q backend alembic api main.py tests
+python -m unittest discover -s tests
+npm test
+npm run build
+git diff --check
 ```
 
-Do not target `head` before document and learner-memory vectors have been imported and verified. Do not delete or modify the SQLite/Chroma sources. Inspect `COCKROACHDB_MIGRATION_MANIFEST.json` and `COCKROACHDB_MIGRATION_EXCEPTIONS.md` after every dry run/import.
+Results: backend 91 passed with 5 conditional skips; live repository/lineage 8 passed; controlled live Agentic Learning Loop 1 passed; frontend 7 files and 19 tests passed; production build passed.
 
-## Starting the backend
+## Runtime selection
 
-After verification passes, change only:
+For a separately authorized temporary Cockroach runtime check, set `PERSISTENCE_BACKEND=cockroach` in the process environment only. Cockroach mode fails startup instead of falling back to SQLite or Chroma. Do not edit the repository-root `.env` for permanent cutover without authorization.
 
-```dotenv
-PERSISTENCE_BACKEND=cockroach
-```
+## Vector-index note
 
-Then start:
+The following indexes exist and their workspace-filtered cosine query shapes pass:
 
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn backend.api.app:app --host 127.0.0.1 --port 8000
-```
+- `idx_document_chunks_workspace_embedding`
+- `idx_memory_embeddings_workspace_embedding`
 
-Do not run two local servers on the same port. The health endpoint is `GET http://127.0.0.1:8000/api/health`. Cockroach mode fails startup instead of falling back when configuration/schema access is invalid.
+Live `EXPLAIN` used ordinary scans because the final tables contain only 23 document vectors and 7 learner-memory vectors. Optimizer use of either vector index is therefore not claimed.
 
-## Tests
+## Security and scope
 
-```powershell
-python -m compileall backend alembic api main.py tests
-python -m unittest discover -s tests -p "test_*.py" -v
-
-$env:RUN_LIVE_COCKROACH_TESTS='1'
-python -m unittest tests.test_cockroach_persistence -v
-Remove-Item Env:RUN_LIVE_COCKROACH_TESTS
-
-Set-Location frontend
-npm.cmd test
-npm.cmd run build
-Set-Location ..
-```
-
-The full live agentic-loop test must be run with Cockroach composition and controlled fake model output so it proves persistence/vector behavior without making transaction callbacks perform external calls.
-
-## Embedding jobs and failure inspection
-
-Reconcile after a failed/interrupted embedding operation:
-
-```powershell
-python -m backend.infrastructure.reconcile_vectors
-```
-
-Inspect sanitized state through `embedding_jobs`: status, attempts, timestamps, entity type/ID, operation, and bounded `last_error`. Do not include provider payloads, credentials, or source text in operational tickets. A newer pending operation supersedes an older pending/failed operation for the same entity.
-
-## Verifying vector retrieval
-
-Both vector queries must include `workspace_id` and use cosine distance `<=>`. Verify:
-
-- document scope, notebook-derived document scope, and exact topic chunk pairs;
-- active learner-memory filtering;
-- top-k order and deterministic tie ordering;
-- vector dimension 384;
-- index names `idx_document_chunks_workspace_embedding` and `idx_memory_embeddings_workspace_embedding`;
-- `EXPLAIN` evidence after indexes are online.
-
-Use `python -m backend.infrastructure.cockroach.verify` for count, relationship, revision, dimension, and index checks. The migration report must record actual representative query IDs/distances without recording private source content.
-
-## Operational limitations
-
-- CockroachDB `BYTES` is the current compatibility blob adapter and retains the application's 50 MiB default upload ceiling.
-- Embedding/model execution is synchronous post-commit unless an operator runs reconciliation separately.
-- Commit-time network ambiguity requires checking deterministic IDs/idempotency keys before retrying.
-- The product is still single-user/no-auth unless a deployment layer provides protection.
-- Exports are private unencrypted data.
-
-## Work intentionally left for the deployment teammate
-
-AWS, S3/object storage, deployment topology, secret-manager wiring, TLS certificate distribution, authentication/authorization, worker orchestration, observability, backup/restore operations, and production network policy are not implemented in this phase. A future S3 adapter should implement `BlobStorage`; notebook and study services should remain unchanged.
+- No credential is present in the reports or tracked changes.
+- SQLite and Chroma remain unchanged rollback sources.
+- The repair created, altered, or deleted no permanent table or index and reran no migration.
+- AWS, S3, deployment, authentication, notifications, and frontend redesign remain out of scope.
+- The CockroachDB `BYTES` blob adapter remains a compatibility implementation under the existing upload limit.
