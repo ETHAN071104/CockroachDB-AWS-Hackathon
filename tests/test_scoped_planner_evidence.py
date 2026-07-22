@@ -10,8 +10,12 @@ from unittest.mock import patch
 
 import backend.study.database as study_database
 import backend.study.planner as planner
+import backend.rag.database as rag_database
 
+from backend.application.dependencies import configure_application_dependencies
+from backend.memory.database import initialize_memory_database
 from backend.rag.scope import RetrievalScope, ResolvedRetrievalScope
+from backend.repositories.sqlite import initialize_foundation_schema
 
 
 class ScopedAdaptivePlanEvidenceTest(unittest.TestCase):
@@ -46,9 +50,27 @@ class ScopedAdaptivePlanEvidenceTest(unittest.TestCase):
             temporary_connection,
         )
         self.connection_patch.start()
+        self.database_path_patch = patch.object(
+            rag_database,
+            "DATABASE_PATH",
+            self.database_path,
+        )
+        self.database_path_patch.start()
+        self.directories_patch = patch.object(
+            rag_database,
+            "ensure_directories",
+        )
+        self.directories_patch.start()
+        rag_database.initialize_database()
+        initialize_memory_database()
         study_database.initialize_study_database()
+        initialize_foundation_schema()
+        configure_application_dependencies(None)
 
     def tearDown(self) -> None:
+        configure_application_dependencies(None)
+        self.directories_patch.stop()
+        self.database_path_patch.stop()
         self.connection_patch.stop()
         self.temporary_dir.cleanup()
 

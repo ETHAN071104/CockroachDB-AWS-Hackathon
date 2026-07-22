@@ -190,6 +190,7 @@ Frontend and tests:
 - `frontend/src/pages/StudyActionsPage.tsx`
 - `frontend/src/pages/MemoryPage.tsx`
 - `tests/test_agentic_loop.py`
+- `tests/test_scoped_planner_evidence.py` (isolates adaptation state from the live local database)
 - `AGENTIC_LOOP_REPORT.md`
 
 ## 15. Test commands
