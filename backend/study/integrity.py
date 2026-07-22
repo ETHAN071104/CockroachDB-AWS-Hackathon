@@ -7,6 +7,7 @@ from typing import Literal
 from uuid import UUID
 
 from backend.rag.database import get_connection
+from backend.rag import config
 
 
 # ============================================================
@@ -1118,6 +1119,8 @@ def run_study_integrity_check() -> StudyIntegrityReport:
     """
     Run read-only integrity checks across study and quiz data.
     """
+    if config.PERSISTENCE_BACKEND == "cockroach":
+        return _run_cockroach_integrity_check()
     issues: list[IntegrityIssue] = []
     table_counts: list[tuple[str, int]] = []
 
@@ -1190,6 +1193,72 @@ def run_study_integrity_check() -> StudyIntegrityReport:
         issues=tuple(issues),
         table_counts=tuple(table_counts),
     )
+
+
+def _run_cockroach_integrity_check() -> StudyIntegrityReport:
+    from sqlalchemy import text
+
+    from backend.repositories.cockroach.connection import get_engine
+
+    issues: list[IntegrityIssue] = []
+    table_counts: list[tuple[str, int]] = []
+    target_tables = sorted(
+        REQUIRED_TABLES | (OPTIONAL_DOMAIN_TABLES - {"memories"}) | {"learner_memories"}
+    )
+    with get_engine().connect() as connection:
+        existing = {
+            str(value)
+            for value in connection.execute(
+                text(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema='public'"
+                )
+            ).scalars()
+        }
+        for table_name in target_tables:
+            if table_name not in existing:
+                _append_issue(
+                    issues, severity="error", code="missing_table",
+                    message=f"Required table '{table_name}' does not exist.",
+                    record_type="database_table",
+                )
+                continue
+            count = int(connection.execute(text(f"SELECT count(*) FROM {table_name}")).scalar_one())
+            table_counts.append((table_name, count))
+        if "study_sessions" in existing:
+            active = int(
+                connection.execute(
+                    text("SELECT count(*) FROM study_sessions WHERE status='active'")
+                ).scalar_one()
+            )
+            if active > 1:
+                _append_issue(
+                    issues, severity="error", code="multiple_active_sessions",
+                    message="More than one active study session exists.",
+                    record_type="study_session",
+                )
+        orphan_checks = {
+            "orphan_study_interaction": (
+                "SELECT count(*) FROM study_interactions i LEFT JOIN study_sessions s "
+                "ON s.id=i.session_id WHERE s.id IS NULL"
+            ),
+            "orphan_quiz_question": (
+                "SELECT count(*) FROM quiz_question_attempts q LEFT JOIN quiz_attempts a "
+                "ON a.id=q.quiz_attempt_id WHERE a.id IS NULL"
+            ),
+            "orphan_document_chunk": (
+                "SELECT count(*) FROM document_chunks c LEFT JOIN documents d "
+                "ON d.id=c.document_id WHERE d.id IS NULL"
+            ),
+        }
+        for code, query in orphan_checks.items():
+            if int(connection.execute(text(query)).scalar_one()):
+                _append_issue(
+                    issues, severity="error", code=code,
+                    message="A CockroachDB relationship has a missing parent.",
+                    record_type="database_relationship",
+                )
+    return StudyIntegrityReport(tuple(issues), tuple(table_counts))
 
 
 # ============================================================

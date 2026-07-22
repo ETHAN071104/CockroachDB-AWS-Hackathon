@@ -2,7 +2,7 @@
 
 Local Study Companion is a private, citation-first study workspace for PDF, PowerPoint, and text notes. It keeps the original terminal application and adds a synchronous FastAPI API plus a responsive React/Vite TypeScript interface.
 
-The application stores metadata, study history, and cached intelligence in SQLite; document and learner-memory vectors live in separate local Chroma stores. Embedding and language-model providers are created only when a workflow needs them, so normal startup, health checks, the dashboard, and cached GET requests do not invoke an LLM.
+Persistence is selectable. `PERSISTENCE_BACKEND=sqlite` keeps the legacy local SQLite plus Chroma layout. `PERSISTENCE_BACKEND=cockroach` stores relational state, document chunks/vectors, learner memories/vectors, durable workflows, and embedding jobs in CockroachDB. Embedding and language-model providers are created only when a workflow needs them, so startup, health checks, the dashboard, and cached GET requests do not invoke an LLM.
 
 ## What Milestone 7 includes
 
@@ -26,9 +26,9 @@ Root launch shims -----------------------+
                   backend/rag/  backend/memory/
                   backend/study/  backend/llm/
                          |          |
-                         +-- SQLite
-                         +-- document Chroma
-                         +-- memory Chroma
+                         +-- repository interfaces
+                              |-- SQLite + Chroma (legacy local mode)
+                              `-- CockroachDB + VECTOR(384)
 ```
 
 | Area | Responsibility |
@@ -42,9 +42,12 @@ Root launch shims -----------------------+
 | `backend/llm/` | Lazy provider construction. |
 | `frontend/` | React Router application, typed API client, request hooks, reusable UI, styles, and Vitest tests. |
 | `tests/` | Python `unittest` unit, integration, API, regression, and end-to-end coverage. |
-| `data/` | Local runtime SQLite and Chroma data. It is intentionally ignored by Git. |
+| `backend/repositories/cockroach/` | CockroachDB adapters, pooled connections, retrying UnitOfWork, blob storage, and vector retrieval. |
+| `backend/infrastructure/cockroach/` | Health, Alembic runner, source validation, one-time migration, and verification commands. |
+| `alembic/` | Version-controlled CockroachDB schema and deferred vector-index revisions. |
+| `data/` | Legacy local SQLite and Chroma data plus migration sources. It is intentionally ignored by Git. |
 
-FastAPI startup initializes additive SQLite tables and probes the two Chroma stores. It does not load the embedding model or call the language model. SQLite connections enable foreign keys, a busy timeout, and WAL mode, and are closed at their service boundaries.
+FastAPI startup initializes/probes only the selected backend. Cockroach mode fails loudly if `DATABASE_URL` is absent and never falls back to local storage. It does not load the embedding model or call the language model. SQLite connections enable foreign keys, a busy timeout, and WAL mode, and are closed at their service boundaries.
 
 ## Prerequisites
 
@@ -134,7 +137,9 @@ LLM_REASONING_VISIBLE=false
 # LLM_BASE_URL=https://provider.example.com/v1
 
 # Embeddings and retrieval
+PERSISTENCE_BACKEND=sqlite
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+EMBEDDING_DIMENSION=384
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 RETRIEVAL_K=5
@@ -158,7 +163,16 @@ Configuration variables and defaults:
 | `LLM_BASE_URL` | Only for `openai_compatible` | None | Base URL of an OpenAI-compatible API, normally ending in `/v1`. It is ignored by the dedicated OpenRouter and Groq integrations. |
 | `LLM_REASONING_VISIBLE` | No | `false` | Whether supported providers expose reasoning text to internal callers. Keep disabled for the normal UI. |
 | `STUDY_DATA_DIR` | No | `<project>/data` | Directory containing SQLite and both Chroma stores. |
+| `PERSISTENCE_BACKEND` | No | `sqlite` | Selects `sqlite` or `cockroach`; there is no silent fallback. |
+| `DATABASE_URL` | Cockroach mode | None | CockroachDB connection string using TLS `verify-full`. Never log or commit it. |
+| `DATABASE_POOL_SIZE` | No | `5` | Base SQLAlchemy connection-pool size. |
+| `DATABASE_MAX_OVERFLOW` | No | `5` | Additional temporary pool connections. |
+| `DATABASE_CONNECT_TIMEOUT` | No | `15` | Connection timeout in seconds. |
+| `DATABASE_MAX_TRANSACTION_RETRIES` | No | `5` | Maximum SQLSTATE `40001` transaction retries. |
+| `DATABASE_RETRY_BASE_DELAY_MS` | No | `100` | Exponential-backoff base delay. |
 | `EMBEDDING_MODEL` | No | `sentence-transformers/all-MiniLM-L6-v2` | Hugging Face embedding model. |
+| `EMBEDDING_DIMENSION` | No | `384` | Must match both the model and `VECTOR(384)` schema. |
+| `ENABLE_VECTOR_INDEX` | No | `true` | Enables the documented distributed vector-index rollout. |
 | `CHUNK_SIZE` | No | `1000` | Character-oriented document chunk size. |
 | `CHUNK_OVERLAP` | No | `200` | Chunk overlap. |
 | `RETRIEVAL_K` | No | `5` | Maximum document chunks used for ordinary retrieval. |
@@ -170,7 +184,36 @@ Configuration variables and defaults:
 | `MEMORY_DUPLICATE_MAX_DISTANCE` | No | `0.40` | Similarity threshold used during duplicate-memory handling. |
 | `MAX_UPLOAD_BYTES` | No | `52428800` | Upload ceiling in bytes (50 MiB). |
 
-Never commit `.env` or provider secrets. A custom `STUDY_DATA_DIR` should point to a private, writable location.
+Never commit `.env`, `DATABASE_URL`, certificates containing private material, or provider secrets. `.env.example` contains placeholders only. A custom `STUDY_DATA_DIR` should point to a private, writable location.
+
+### CockroachDB schema and one-time migration
+
+Keep `PERSISTENCE_BACKEND=sqlite` while preparing the schema and importing legacy data. The safe order is:
+
+```powershell
+# Read-only connection/permission preflight
+python -m backend.infrastructure.cockroach.migration_runner preflight
+
+# Validate SQLite + both Chroma collections without changing either source or CockroachDB
+python -m backend.infrastructure.cockroach.migrate --dry-run
+
+# Create relational/vector-column schema, but defer vector indexes
+python -m backend.infrastructure.cockroach.migration_runner upgrade 0001_agentbook_cockroach_schema
+
+# Import through deterministic UUIDv5 mappings; safe reruns use ON CONFLICT and a migration manifest
+python -m backend.infrastructure.cockroach.migrate
+
+# Add workspace-prefixed cosine vector indexes after vectors have been verified
+python -m backend.infrastructure.cockroach.migration_runner upgrade head
+
+# Compare source/destination counts, relationships, dimensions, revision, and indexes
+python -m backend.infrastructure.cockroach.verify
+
+# Compare legacy and Cockroach nearest-neighbor identities/order
+python -m backend.infrastructure.cockroach.compare
+```
+
+Only after verification succeeds, set `PERSISTENCE_BACKEND=cockroach` and restart the API. The migration never deletes or edits `data/app.db`, `data/chroma`, or `data/memory_chroma`.
 
 ## Run the application
 
@@ -186,7 +229,7 @@ The equivalent direct backend-module command is:
 python -m backend.cli
 ```
 
-The CLI remains a supported entry point for document ingestion, grounded chat, learner-memory management, study reports, quizzes, review, planning, and coaching. It uses the same SQLite and Chroma data as the API unless `STUDY_DATA_DIR` is changed.
+The CLI remains a supported entry point for document ingestion, grounded chat, learner-memory management, study reports, quizzes, review, planning, and coaching. Repository-backed workflows use the selected persistence mode; legacy-only maintenance/export commands remain intended for SQLite mode.
 
 ### API
 
@@ -209,7 +252,7 @@ PowerShell health smoke test:
 Invoke-RestMethod http://127.0.0.1:8000/api/health
 ```
 
-Health checks initialize/probe local storage but do not load embeddings or call an LLM.
+Health checks probe only the selected storage backend and do not load embeddings or call an LLM.
 
 ### Frontend
 
@@ -343,7 +386,7 @@ Submission accepts a contiguous prefix starting at question 1:
 
 The server derives correctness from its pending registry, calculates results, returns explanations and citations, and persists an attempt ID. Overall score is correct answers divided by all generated questions; answered accuracy is correct answers divided by answered questions. A pending quiz is single-use and disappears after submission or API restart.
 
-## Storage and migrations
+## Storage, vectors, and transactions
 
 Default runtime layout:
 
@@ -354,9 +397,23 @@ data/
 └── memory_chroma/  # learner-memory embeddings
 ```
 
-SQLite migrations are additive: tables and indexes are created if absent, and new nullable lineage columns are added without rebuilding existing tables. Foreign keys are enabled on every connection, `busy_timeout` is set, and WAL improves local reader/writer coexistence.
+SQLite migrations remain additive. CockroachDB uses Alembic, application-generated UUIDs, workspace-scoped compatibility `public_id` values, and `legacy_sqlite_id` for imported integer identities. Imported UUIDs are deterministic UUIDv5 values derived from workspace, source table, and legacy identity.
 
-Do not hand-edit SQLite or Chroma files while the CLI or API is running. The data directories, database files, WAL sidecars, logs, frontend build output, dependency folders, and temporary exports are ignored by Git. Ignoring a file does not untrack a copy already committed in repository history.
+Document chunks are normalized in `document_chunks` with `VECTOR(384)`. Learner memory embeddings use a one-to-one `learner_memory_embeddings` table so memory lifecycle data remains independent from embedding-model/version changes. Both semantic queries use cosine distance (`<=>`), filter `workspace_id`, and apply deterministic secondary ordering. Distributed vector indexes prefix `workspace_id`:
+
+```sql
+CREATE VECTOR INDEX idx_document_chunks_workspace_embedding
+ON document_chunks (workspace_id, embedding vector_cosine_ops);
+
+CREATE VECTOR INDEX idx_memory_embeddings_workspace_embedding
+ON learner_memory_embeddings (workspace_id, embedding vector_cosine_ops);
+```
+
+CockroachDB transactions run at serializable isolation. `CockroachUnitOfWork.run()` retries SQLSTATE `40001` with a fresh transaction, bounded exponential backoff, and jitter. File parsing, LLM calls, embedding generation, and HTTP calls remain outside retryable callbacks. Source rows and embedding jobs commit together; post-commit processing or `python -m backend.infrastructure.reconcile_vectors` finishes/retries embeddings after interruption.
+
+Uploaded bytes are behind `BlobStorage`. The current Cockroach compatibility adapter stores them as `BYTES`, retaining the 50 MiB default upload limit. A deployment team can later add an S3-backed adapter without changing notebook/study services; S3 is not part of this repository phase.
+
+Do not hand-edit SQLite or Chroma migration sources while the CLI, API, or migration verifier is running. The data directories, database files, WAL sidecars, logs, frontend build output, dependency folders, and temporary exports are ignored by Git. Ignoring a file does not untrack a copy already committed in repository history.
 
 ## Export
 
@@ -366,7 +423,7 @@ Download a local backup from:
 GET /api/system/export
 ```
 
-The exporter:
+In SQLite mode the exporter:
 
 1. creates a consistent SQLite copy with SQLite's backup API;
 2. allowlists expected files from the document and learner-memory Chroma stores;
@@ -375,7 +432,7 @@ The exporter:
 5. streams a ZIP response; and
 6. removes the temporary export workspace after delivery or failure.
 
-The archive excludes secrets, `.env`, logs, virtual environments, source code, frontend dependencies/build artifacts, arbitrary temporary files, and in-memory pending quiz or proposal registries. It contains private study data and is neither encrypted nor authenticated: store and transfer it accordingly. There is no restore UI in this milestone.
+In Cockroach mode the same endpoint creates an allowlisted logical JSON snapshot of application tables and does not read SQLite/Chroma. Neither export contains `.env`, `DATABASE_URL`, provider credentials, logs, virtual environments, or source code. Exports contain private study data and are neither encrypted nor authenticated: store and transfer them accordingly. There is no restore UI in this milestone.
 
 ## Frontend design and behavior
 
@@ -408,6 +465,14 @@ python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
 Backend tests isolate state with temporary SQLite/Chroma directories, fake embeddings, mocked LLMs, fresh pending registries, and cleared caches. Coverage includes migrations, structured API errors, notebooks, assignments, ingestion, scoped retrieval, intelligence caches, chat, sessions, learner-memory decisions, quiz secrecy/scoring, reports, integrity, rollback/compensation, and export exclusions.
+
+After applying the live schema, run CockroachDB-marked integration tests explicitly:
+
+```powershell
+$env:RUN_LIVE_COCKROACH_TESTS='1'
+python -m unittest tests.test_cockroach_persistence -v
+Remove-Item Env:RUN_LIVE_COCKROACH_TESTS
+```
 
 After backend changes, manually launch `python main.py`, exercise the affected CLI path, and exit normally. Also start Uvicorn and verify `/api/health`.
 
@@ -454,8 +519,10 @@ At every size check the browser console, horizontal overflow, keyboard-only navi
 - Provider requests send selected retrieved text to the configured LLM service. Review that provider's privacy terms before using sensitive notes.
 - Embeddings and provider libraries are lazy-loaded, so the first generative/retrieval action can be slower than startup.
 - API workflows are synchronous and may occupy a request until embedding or generation finishes.
-- SQLite and Chroma deletion/export coordination is compensating, not a distributed transaction.
-- Pending quizzes and learner-memory proposal registries are intentionally ephemeral across API restarts.
+- SQLite and Chroma deletion/export coordination remains compensating in legacy mode. Cockroach mode uses relational embedding jobs and reconciliation.
+- Pending quizzes, learner-memory proposals, and consolidation proposals are durable workflow records and survive restart.
+- CockroachDB `BYTES` upload storage is a compatibility implementation, not a substitute for production object storage at large scale.
+- Ambiguous network failures during commit require checking the idempotent record/job identity before an operator retries.
 - The export is a backup artifact, not an encrypted archive, and automated restore is out of scope.
 - PPTX visual content and scanned PDFs require OCR or multimodal processing, which is out of scope.
 - The UI is light-only; dark mode is not included.

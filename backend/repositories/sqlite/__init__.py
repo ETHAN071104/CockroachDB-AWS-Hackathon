@@ -15,6 +15,7 @@ from backend.repositories.sqlite.foundation import (
     initialize_foundation_schema,
 )
 from backend.repositories.sqlite.unit_of_work import SQLiteUnitOfWork
+from backend.repositories.sqlite.blob_storage import SQLiteBlobStorage
 
 __all__ = [
     "SQLiteAdaptationEventRepository",
@@ -26,6 +27,7 @@ __all__ = [
     "SQLiteQuizRepository",
     "SQLiteStudySessionRepository",
     "SQLiteUnitOfWork",
+    "SQLiteBlobStorage",
     "SQLiteVectorOutboxRepository",
     "SQLiteWorkflowStateRepository",
     "SQLiteWorkspaceRepository",

@@ -10,6 +10,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backend.application.dependencies import get_application_dependencies
+from backend.rag import config
+from backend.rag.vector_store import get_vector_store
+from backend.repositories.chroma import ChromaDocumentVectorRepository
 from backend.llm.factory import create_chat_model
 from backend.rag.config import LLM_PROVIDER
 from backend.rag.intelligence_store import (
@@ -18,12 +21,8 @@ from backend.rag.intelligence_store import (
     TopicInput,
     TopicSourcePair,
     cache_is_stale,
-    fingerprint_for_scope,
 )
-from backend.rag.notebooks import get_document_record
 from backend.rag.scope import RetrievalScope, ResolvedRetrievalScope, resolve_retrieval_scope
-from backend.rag.vector_store import get_vector_store
-from backend.repositories.chroma import ChromaDocumentVectorRepository
 
 
 SummaryKind = Literal["document", "notebook", "topic"]
@@ -267,9 +266,15 @@ def get_intelligence_model() -> Any:
     return model
 
 
+def _fingerprint_for_scope(scope_kind: str, scope_key: object = None) -> str:
+    return get_application_dependencies().intelligence.fingerprint_for_scope(
+        scope_kind, scope_key
+    )
+
+
 def generate_summary(kind: SummaryKind, scope_id: int | str) -> SummaryView:
     cache_kind, scope_kind, scope_key, scope = _summary_identity(kind, scope_id)
-    fingerprint = fingerprint_for_scope(scope_kind, scope_key)
+    fingerprint = _fingerprint_for_scope(scope_kind, scope_key)
     sources = collect_evidence(scope)
     if not sources:
         raise InsufficientEvidenceError(
@@ -303,7 +308,7 @@ def get_cached_summary(
     if cached is None:
         return None
     try:
-        current_fingerprint = fingerprint_for_scope(scope_kind, scope_key)
+        current_fingerprint = _fingerprint_for_scope(scope_kind, scope_key)
         stale = cache_is_stale(cached, current_fingerprint)
     except LookupError:
         stale = True
@@ -317,7 +322,7 @@ def extract_topics(scope: RetrievalScope) -> list[TopicView]:
     if resolved.kind == "topic":
         raise ValueError("Topic extraction cannot use a topic scope.")
     scope_kind, scope_key = _scope_identity(scope, resolved)
-    fingerprint = fingerprint_for_scope(scope_kind, scope_key)
+    fingerprint = _fingerprint_for_scope(scope_kind, scope_key)
     sources = collect_evidence(scope, resolved_scope=resolved)
     if not sources:
         raise InsufficientEvidenceError(
@@ -396,7 +401,13 @@ def collect_evidence(
         return []
 
     try:
-        chunks = ChromaDocumentVectorRepository(get_vector_store).list_chunks(
+        dependencies = get_application_dependencies()
+        vectors = (
+            ChromaDocumentVectorRepository(get_vector_store)
+            if config.PERSISTENCE_BACKEND == "sqlite"
+            else dependencies.document_vectors
+        )
+        chunks = vectors.list_chunks(
             resolved.chroma_filter
         )
     except ValueError as error:
@@ -439,7 +450,7 @@ def collect_evidence(
     for _sort_key, metadata, text in prepared:
         document_id = int(metadata["document_id"])
         if document_id not in document_memberships:
-            record = get_document_record(document_id)
+            record = get_application_dependencies().notebooks.get_document(document_id)
             if record is None:
                 continue
             document_memberships[document_id] = (
@@ -669,7 +680,7 @@ def _summary_view(
 
 def _topic_view(topic: Topic) -> TopicView:
     try:
-        current = fingerprint_for_scope(
+        current = _fingerprint_for_scope(
             topic.extraction_scope_kind,
             topic.extraction_scope_key,
         )
@@ -682,7 +693,7 @@ def _topic_view(topic: Topic) -> TopicView:
             "document_id": source.document_id,
             "notebook_id": (
                 record.notebook_id
-                if (record := get_document_record(source.document_id)) is not None
+                if (record := get_application_dependencies().notebooks.get_document(source.document_id)) is not None
                 else None
             ),
             "filename": source.filename,

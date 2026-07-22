@@ -36,6 +36,16 @@ class SQLiteUnitOfWork:
         self._owner = False
         self._finished = False
         self._after_commit: list[Callable[[], None]] = []
+        self._retry_count = 0
+
+    @property
+    def retry_count(self) -> int:
+        return self._retry_count
+
+    def run(self, work):
+        """Execute one SQLite transaction using the shared callback contract."""
+        with self as unit_of_work:
+            return work(unit_of_work)
 
     def __enter__(self) -> SQLiteUnitOfWork:
         current = _ACTIVE_UOW.get()

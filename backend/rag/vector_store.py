@@ -14,21 +14,7 @@ from backend.rag.config import (
     CHROMA_PATH,
     EMBEDDING_MODEL,
 )
-
-
-@lru_cache(maxsize=1)
-def get_embedding_model() -> "HuggingFaceEmbeddings":
-    from langchain_huggingface import HuggingFaceEmbeddings
-
-    return HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL,
-        model_kwargs={
-            "device": "cpu",
-        },
-        encode_kwargs={
-            "normalize_embeddings": True,
-        },
-    )
+from backend.rag.embeddings import get_embedding_model
 
 
 @lru_cache(maxsize=1)

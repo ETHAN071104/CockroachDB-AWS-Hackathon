@@ -17,3 +17,7 @@ fastapi
 uvicorn[standard]
 python-multipart
 httpx
+SQLAlchemy==2.0.51
+sqlalchemy-cockroachdb==2.0.4
+psycopg[binary]==3.3.4
+alembic==1.18.5

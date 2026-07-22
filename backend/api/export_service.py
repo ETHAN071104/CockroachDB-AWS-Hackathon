@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import base64
 import shutil
 import sqlite3
 import tempfile
@@ -60,6 +61,12 @@ def build_study_export(
     app_version: str = API_VERSION,
 ) -> ExportArtifact:
     """Create one allowlisted ZIP export in an isolated temporary directory."""
+    if rag_config.PERSISTENCE_BACKEND == "cockroach":
+        return _build_cockroach_export(
+            temp_parent=temp_parent,
+            created_at=created_at,
+            app_version=app_version,
+        )
     try:
         workspace = Path(
             tempfile.mkdtemp(
@@ -69,6 +76,7 @@ def build_study_export(
         ).resolve()
     except Exception as error:
         raise ExportCreationError("Study data export could not be created.") from error
+
 
     try:
         timestamp = _utc_timestamp(created_at)
@@ -131,6 +139,80 @@ def build_study_export(
         if isinstance(error, ExportCreationError):
             raise
         raise ExportCreationError("Study data export could not be created.") from error
+
+
+def _build_cockroach_export(
+    *,
+    temp_parent: Path | None,
+    created_at: datetime | None,
+    app_version: str,
+) -> ExportArtifact:
+    """Create a credential-free logical snapshot without touching SQLite/Chroma."""
+    from sqlalchemy import text
+
+    from backend.repositories.cockroach.connection import get_engine
+
+    allowlist = (
+        "workspaces", "notebooks", "documents", "document_blobs",
+        "notebook_documents", "cached_intelligence", "topics", "topic_sources",
+        "document_chunks", "study_sessions", "study_interactions",
+        "study_interaction_sources", "quiz_attempts", "quiz_question_attempts",
+        "quiz_question_sources", "learner_memories", "memory_relationships",
+        "learner_memory_embeddings", "workflow_states", "learning_signals",
+        "adaptation_events", "embedding_jobs",
+    )
+    try:
+        workspace = Path(
+            tempfile.mkdtemp(
+                prefix="study-companion-export-",
+                dir=str(temp_parent) if temp_parent is not None else None,
+            )
+        ).resolve()
+        timestamp = _utc_timestamp(created_at)
+        payload: dict[str, object] = {
+            "format": EXPORT_FORMAT,
+            "format_version": EXPORT_FORMAT_VERSION,
+            "app_version": app_version,
+            "created_at": timestamp,
+            "persistence_backend": "cockroach",
+            "credentials_recorded": False,
+            "tables": {},
+        }
+        with get_engine().connect() as connection:
+            tables: dict[str, object] = {}
+            for table_name in allowlist:
+                rows = connection.execute(text(f"SELECT * FROM {table_name}")).mappings().all()
+                tables[table_name] = [
+                    {key: _logical_export_value(value) for key, value in row.items()}
+                    for row in rows
+                ]
+            payload["tables"] = tables
+        data_path = workspace / "cockroach-data.json"
+        data_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        compact_timestamp = timestamp.replace("-", "").replace(":", "")
+        archive_name = f"study-companion-export-{compact_timestamp}.zip"
+        archive_path = workspace / archive_name
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(data_path, "cockroach-data.json")
+        data_path.unlink()
+        return ExportArtifact(archive_path, workspace, archive_name)
+    except Exception as error:
+        if "workspace" in locals():
+            shutil.rmtree(workspace, ignore_errors=True)
+        raise ExportCreationError("Study data export could not be created.") from error
+
+
+def _logical_export_value(value: object) -> object:
+    if isinstance(value, bytes):
+        return {"encoding": "base64", "data": base64.b64encode(value).decode("ascii")}
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (dict, list)):
+        return value
+    return str(value)
 
 
 def cleanup_export_artifact(artifact: ExportArtifact) -> None:

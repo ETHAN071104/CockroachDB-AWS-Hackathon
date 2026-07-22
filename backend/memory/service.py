@@ -13,6 +13,7 @@ from backend.memory.vector_store import (
     get_memory_vector_store,
     make_memory_vector_id,
 )
+from backend.rag import config
 from backend.rag.config import MAX_MEMORY_DISTANCE, MEMORY_RETRIEVAL_K
 from backend.repositories.chroma import ChromaMemoryVectorRepository
 
@@ -58,10 +59,11 @@ def _memory_metadata(memory: StoredMemory) -> dict[str, object]:
     }
 
 
-def _memory_vector_repository() -> ChromaMemoryVectorRepository:
-    # Keep the legacy factory as the compatibility seam used by tests and
-    # local installations while business code depends on the repository API.
-    return ChromaMemoryVectorRepository(get_memory_vector_store)
+def _memory_vector_repository():
+    dependencies = get_application_dependencies()
+    if config.PERSISTENCE_BACKEND == "sqlite":
+        return ChromaMemoryVectorRepository(get_memory_vector_store)
+    return dependencies.memory_vectors
 
 
 def _outbox_service() -> VectorOutboxService:
@@ -109,7 +111,7 @@ def add_memory(
     importance: float = 0.5,
 ) -> StoredMemory:
     dependencies = get_application_dependencies()
-    with dependencies.unit_of_work():
+    def persist(_unit_of_work):
         memory_id = dependencies.memories.insert(
             memory_type=memory_type,
             content=content,
@@ -120,7 +122,8 @@ def add_memory(
         if memory is None:
             raise RuntimeError("Memory was inserted but could not be loaded.")
         _enqueue_memory_upsert(memory)
-    return memory
+        return memory
+    return dependencies.unit_of_work().run(persist)
 
 
 def search_memories(
@@ -178,7 +181,7 @@ def update_memory(
     importance: float,
 ) -> StoredMemory:
     dependencies = get_application_dependencies()
-    with dependencies.unit_of_work():
+    def persist(_unit_of_work):
         if dependencies.memories.get(memory_id) is None:
             raise ValueError(f"Memory ID {memory_id} does not exist.")
         updated = dependencies.memories.update(
@@ -194,12 +197,13 @@ def update_memory(
         if updated_memory is None:
             raise RuntimeError("Memory was updated but could not be loaded.")
         _enqueue_memory_upsert(updated_memory)
-    return updated_memory
+        return updated_memory
+    return dependencies.unit_of_work().run(persist)
 
 
 def archive_memory(memory_id: int) -> bool:
     dependencies = get_application_dependencies()
-    with dependencies.unit_of_work():
+    def persist(_unit_of_work):
         existing = dependencies.memories.get(memory_id)
         if existing is None:
             return False
@@ -208,12 +212,13 @@ def archive_memory(memory_id: int) -> bool:
         if not dependencies.memories.archive(memory_id):
             return False
         _enqueue_memory_delete(memory_id)
-    return True
+        return True
+    return dependencies.unit_of_work().run(persist)
 
 
 def restore_archived_memory(memory_id: int) -> StoredMemory:
     dependencies = get_application_dependencies()
-    with dependencies.unit_of_work():
+    def persist(_unit_of_work):
         existing = dependencies.memories.get(memory_id)
         if existing is None:
             raise ValueError(f"Memory ID {memory_id} does not exist.")
@@ -225,7 +230,8 @@ def restore_archived_memory(memory_id: int) -> StoredMemory:
         if active_memory is None:
             raise RuntimeError("Memory was reactivated but could not be loaded.")
         _enqueue_memory_upsert(active_memory)
-    return active_memory
+        return active_memory
+    return dependencies.unit_of_work().run(persist)
 
 
 def validate_current_consolidation_sources(
@@ -279,7 +285,7 @@ def apply_memory_consolidation(
     proposal: MemoryConsolidationProposal,
 ) -> MemoryConsolidationResult:
     dependencies = get_application_dependencies()
-    with dependencies.unit_of_work():
+    def persist(_unit_of_work):
         sources = validate_current_consolidation_sources(proposal)
         candidate = proposal.candidate
         target = add_memory(
@@ -296,7 +302,8 @@ def apply_memory_consolidation(
             target_memory_id=target.id,
             relationship_type="consolidated_into",
         )
-    return MemoryConsolidationResult(tuple(sources), target)
+        return MemoryConsolidationResult(tuple(sources), target)
+    return dependencies.unit_of_work().run(persist)
 
 
 def replace_memory_with_candidate(
@@ -307,7 +314,7 @@ def replace_memory_with_candidate(
     importance: float,
 ) -> MemoryReplacementResult:
     dependencies = get_application_dependencies()
-    with dependencies.unit_of_work():
+    def persist(_unit_of_work):
         existing = dependencies.memories.get(existing_memory_id)
         if existing is None:
             raise ValueError(f"Memory ID {existing_memory_id} does not exist.")
@@ -323,15 +330,17 @@ def replace_memory_with_candidate(
         )
         if not archive_memory(existing_memory_id):
             raise RuntimeError("The existing memory could not be archived.")
-    return MemoryReplacementResult(existing, new_memory)
+        return MemoryReplacementResult(existing, new_memory)
+    return dependencies.unit_of_work().run(persist)
 
 
 def delete_memory(memory_id: int) -> bool:
     dependencies = get_application_dependencies()
-    with dependencies.unit_of_work():
+    def persist(_unit_of_work):
         if dependencies.memories.get(memory_id) is None:
             return False
         if not dependencies.memories.delete(memory_id):
             return False
         _enqueue_memory_delete(memory_id)
-    return True
+        return True
+    return dependencies.unit_of_work().run(persist)

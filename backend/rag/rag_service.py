@@ -14,13 +14,14 @@ from backend.memory.service import (
     search_memories,
 )
 from backend.rag.config import RETRIEVAL_K
+from backend.rag import config
+from backend.rag.vector_store import get_vector_store
+from backend.repositories.chroma import ChromaDocumentVectorRepository
 from backend.rag.scope import (
     RetrievalScope,
     TopicSourceRepository,
     resolve_retrieval_scope,
 )
-from backend.rag.vector_store import get_vector_store
-from backend.repositories.chroma import ChromaDocumentVectorRepository
 
 
 @dataclass(frozen=True)
@@ -140,7 +141,12 @@ def retrieve_sources(
     if resolved_scope.is_empty:
         return []
 
-    vectors = ChromaDocumentVectorRepository(get_vector_store)
+    dependencies = get_application_dependencies()
+    vectors = (
+        ChromaDocumentVectorRepository(get_vector_store)
+        if config.PERSISTENCE_BACKEND == "sqlite"
+        else dependencies.document_vectors
+    )
     raw_results: list[tuple[Document, float]] = vectors.search(
         cleaned_question,
         k,

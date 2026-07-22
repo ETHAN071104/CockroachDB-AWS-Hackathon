@@ -12,6 +12,11 @@ class ChromaDocumentVectorRepository:
     def __init__(self, store_factory: Callable[[], Any]) -> None:
         self._store_factory = store_factory
 
+    def stage_chunks(self, documents: list[Document], ids: list[str]) -> None:
+        # Chroma has no relational staging table. Its durable SQLite outbox
+        # retains the desired chunk state until post-commit synchronization.
+        del documents, ids
+
     def upsert_chunks(self, documents: list[Document], ids: list[str]) -> None:
         if not ids:
             return

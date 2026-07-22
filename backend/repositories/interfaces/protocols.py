@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from types import TracebackType
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 from backend.domain import (
     AdaptationEvent,
+    BlobMetadata,
     LearningSignal,
     VectorOutboxJob,
     WorkflowState,
     Workspace,
 )
+
+
+T = TypeVar("T")
 
 
 class RepositoryConflictError(RuntimeError):
@@ -35,6 +39,11 @@ class UnitOfWork(Protocol):
 
     def after_commit(self, callback: Callable[[], None]) -> None: ...
 
+    def run(self, work: Callable[["UnitOfWork"], T]) -> T: ...
+
+    @property
+    def retry_count(self) -> int: ...
+
 
 class NotebookRepository(Protocol):
     workspace_id: str
@@ -44,6 +53,32 @@ class NotebookRepository(Protocol):
     def get(self, notebook_id: int) -> Any | None: ...
 
     def list(self, search: str | None = None) -> list[Any]: ...
+
+    def update(
+        self,
+        notebook_id: int,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Any: ...
+
+    def delete(self, notebook_id: int) -> bool: ...
+
+    def assign_document(self, document_id: int, notebook_id: int) -> Any: ...
+
+    def remove_document(self, document_id: int) -> bool: ...
+
+    def count_documents(self, notebook_id: int | None) -> int: ...
+
+    def get_document(self, document_id: int) -> Any | None: ...
+
+    def list_documents(
+        self,
+        *,
+        notebook_id: int | None = None,
+        unsorted_only: bool = False,
+        search: str | None = None,
+    ) -> list[Any]: ...
 
     def get_document_notebook_id(self, document_id: int) -> int | None: ...
 
@@ -72,6 +107,25 @@ class DocumentRepository(Protocol):
     def list(self) -> list[Any]: ...
 
 
+class BlobStorage(Protocol):
+    workspace_id: str
+
+    def store(
+        self,
+        document_id: int,
+        filename: str,
+        mime_type: str,
+        content_hash: str,
+        data: bytes,
+    ) -> BlobMetadata: ...
+
+    def read(self, document_id: int) -> bytes: ...
+
+    def delete(self, document_id: int) -> bool: ...
+
+    def metadata(self, document_id: int) -> BlobMetadata | None: ...
+
+
 class IntelligenceRepository(Protocol):
     workspace_id: str
 
@@ -85,6 +139,8 @@ class IntelligenceRepository(Protocol):
 
     def list_topics(self, **filters: Any) -> list[Any]: ...
 
+    def fingerprint_for_scope(self, scope_kind: str, scope_key: object = None) -> str: ...
+
 
 class DashboardRepository(Protocol):
     workspace_id: str
@@ -97,9 +153,13 @@ class StudySessionRepository(Protocol):
 
     def get_or_create_active(self) -> Any: ...
 
+    def get_active(self) -> Any | None: ...
+
     def insert_interaction_with_sources(self, **values: Any) -> tuple[Any, list[Any]]: ...
 
     def get(self, session_id: int) -> Any | None: ...
+
+    def get_interaction(self, interaction_id: int) -> Any | None: ...
 
     def list(self) -> list[Any]: ...
 
@@ -266,6 +326,8 @@ class WorkflowStateRepository(Protocol):
 
 
 class DocumentVectorRepository(Protocol):
+    def stage_chunks(self, documents: list[Any], ids: list[str]) -> None: ...
+
     def upsert_chunks(self, documents: list[Any], ids: list[str]) -> None: ...
 
     def delete_document(self, document_id: int) -> None: ...

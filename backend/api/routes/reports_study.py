@@ -37,10 +37,9 @@ from backend.application.learning_loop import (
     AdaptationContext,
     record_adaptation_event,
 )
-from backend.rag.notebooks import get_document_record
+from backend.application.dependencies import get_application_dependencies
 from backend.rag.scope import RetrievalScope
 from backend.study.coach import generate_coaching_plan
-from backend.study.database import list_interaction_sources, list_study_sessions
 from backend.study.integrity import run_study_integrity_check
 from backend.study.planner import AdaptiveStudyPlan, StudyPlanItem, build_adaptive_study_plan
 from backend.study.progress import build_progress_report
@@ -103,7 +102,7 @@ def _source(source: Any) -> SourceLineageResponse:
         and notebook_id is None
         and document_id is not None
     ):
-        record = get_document_record(document_id)
+        record = get_application_dependencies().notebooks.get_document(document_id)
         notebook_id = record.notebook_id if record is not None else None
     excerpt = getattr(source, "excerpt", None)
     if excerpt is None:
@@ -144,7 +143,7 @@ def _session_report(report: StudySessionReport) -> SessionReportResponse:
                 created_at=interaction.created_at,
                 sources=[
                     _source(source)
-                    for source in list_interaction_sources(interaction.id)
+                    for source in get_application_dependencies().study_sessions.list_sources(interaction.id)
                 ],
             )
         )
@@ -286,7 +285,7 @@ def _plan(
 def get_session_reports(
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
 ) -> list[SessionReportResponse]:
-    sessions = list_study_sessions()
+    sessions = get_application_dependencies().study_sessions.list()
     if limit is not None:
         sessions = sessions[:limit]
     return [_session_report(build_session_report(session.id)) for session in sessions]

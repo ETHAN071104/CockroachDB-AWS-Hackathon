@@ -3,7 +3,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from backend.application.dependencies import initialize_application_foundation
+from backend.application.dependencies import (
+    get_application_dependencies,
+    initialize_application_foundation,
+)
 from backend.memory.conflict_detector import detect_memory_conflict
 from backend.memory.consolidator import propose_memory_consolidation
 from backend.memory.database import initialize_memory_database
@@ -20,29 +23,20 @@ from backend.memory.service import (
     update_memory,
 )
 from backend.memory.validator import validate_memory_candidate
+from backend.rag import config
 from backend.rag.config import ENABLE_MEMORY_PROPOSALS
-from backend.rag.database import (
-    initialize_database,
-    list_documents,
-)
+from backend.rag.database import initialize_database
 from backend.rag.document_service import delete_document as delete_stored_document
 from backend.rag.ingestion import index_file
 from backend.rag.rag_service import RetrievedSource, answer_question
 from backend.study.coach import format_coaching_plan, generate_coaching_plan
 from backend.study.database import (
     StudySourceInput,
-    end_study_session,
-    get_or_create_active_study_session,
     initialize_study_database,
-    insert_study_interaction_with_sources,
-    list_quiz_attempts,
-    list_study_sessions,
-    update_interaction_outcome,
 )
 from backend.study.planner import build_adaptive_study_plan, format_adaptive_study_plan
 from backend.study.progress import build_progress_report, format_progress_report
 from backend.study.quiz_generator import format_grounded_quiz, generate_grounded_quiz
-from backend.study.quiz_history import save_quiz_run_result
 from backend.study.quiz_reporting import (
     build_quiz_attempt_report,
     build_quiz_performance_report,
@@ -54,6 +48,42 @@ from backend.study.recommendations import build_review_queue, format_review_queu
 from backend.study.reporting import build_session_report, format_session_report
 from backend.study.reviewer import format_review_action, generate_review_action
 from backend.study.summarizer import generate_session_summary
+
+
+def list_documents():
+    return get_application_dependencies().documents.list()
+
+
+def list_study_sessions():
+    return get_application_dependencies().study_sessions.list()
+
+
+def list_quiz_attempts():
+    return get_application_dependencies().quizzes.list_attempts()
+
+
+def save_quiz_run_result(result):
+    return get_application_dependencies().quizzes.save_run_result(result)
+
+
+def end_study_session(session_id: int):
+    return get_application_dependencies().study_sessions.end(session_id)
+
+
+def update_interaction_outcome(interaction_id: int, outcome: str):
+    return get_application_dependencies().study_sessions.update_outcome(
+        interaction_id, outcome
+    )
+
+
+def get_or_create_active_study_session():
+    return get_application_dependencies().study_sessions.get_or_create_active()
+
+
+def insert_study_interaction_with_sources(**values):
+    return get_application_dependencies().study_sessions.insert_interaction_with_sources(
+        **values
+    )
 
 
 def save_candidate_memory(
@@ -2021,9 +2051,10 @@ def delete_file_interface() -> None:
 
 
 def main() -> None:
-    initialize_memory_database()
-    initialize_database()
-    initialize_study_database()
+    if config.PERSISTENCE_BACKEND == "sqlite":
+        initialize_memory_database()
+        initialize_database()
+        initialize_study_database()
     initialize_application_foundation()
 
     print_header()

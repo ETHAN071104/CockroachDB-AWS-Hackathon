@@ -16,6 +16,7 @@ from backend.api.schemas import (
     NotebookResponse,
     NotebookUpdate,
 )
+from backend.application.dependencies import get_application_dependencies
 from backend.rag.config import MAX_UPLOAD_BYTES
 from backend.rag.document_service import delete_document
 from backend.rag.ingestion import index_file_bytes
@@ -26,19 +27,13 @@ from backend.rag.notebooks import (
     Notebook,
     NotebookNotEmptyError,
     NotebookNotFoundError,
-    assign_document_to_notebook,
-    count_notebook_documents,
-    create_notebook,
-    delete_notebook,
-    get_document_record,
-    get_notebook,
-    list_document_records,
-    list_notebooks,
-    remove_document_from_notebook,
-    update_notebook,
 )
 
 router = APIRouter(prefix="/api", tags=["library"])
+
+
+def _repository():
+    return get_application_dependencies().notebooks
 
 
 def _notebook_response(notebook: Notebook) -> NotebookResponse:
@@ -58,7 +53,7 @@ def _unsorted_response() -> NotebookResponse:
         id=None,
         name="Unsorted Documents",
         description="Documents not assigned to a notebook.",
-        document_count=count_notebook_documents(None),
+        document_count=_repository().count_documents(None),
         created_at=None,
         updated_at=None,
         is_virtual=True,
@@ -78,7 +73,7 @@ def _document_response(document: DocumentRecord) -> DocumentResponse:
 
 
 def _notebook_or_404(notebook_id: int) -> Notebook:
-    notebook = get_notebook(notebook_id)
+    notebook = _repository().get(notebook_id)
     if notebook is None:
         raise ApiError(
             status_code=404,
@@ -89,7 +84,7 @@ def _notebook_or_404(notebook_id: int) -> Notebook:
 
 
 def _document_or_404(document_id: int) -> DocumentRecord:
-    document = get_document_record(document_id)
+    document = _repository().get_document(document_id)
     if document is None:
         raise ApiError(
             status_code=404,
@@ -103,7 +98,7 @@ def _document_or_404(document_id: int) -> DocumentRecord:
 def get_notebooks(
     q: Annotated[str | None, Query(max_length=200)] = None,
 ) -> NotebookListResponse:
-    notebooks = list_notebooks(search=q)
+    notebooks = _repository().list(search=q)
     return NotebookListResponse(
         items=[_notebook_response(item) for item in notebooks],
         total=len(notebooks),
@@ -118,7 +113,7 @@ def get_notebooks(
 )
 def post_notebook(payload: NotebookCreate) -> NotebookResponse:
     try:
-        notebook = create_notebook(
+        notebook = _repository().create(
             payload.name,
             payload.description or "",
         )
@@ -149,7 +144,7 @@ def get_unsorted_notebook() -> NotebookResponse:
 def get_unsorted_documents(
     q: Annotated[str | None, Query(max_length=255)] = None,
 ) -> DocumentListResponse:
-    documents = list_document_records(
+    documents = _repository().list_documents(
         unsorted_only=True,
         search=q,
     )
@@ -172,7 +167,7 @@ def patch_notebook(
     payload: NotebookUpdate,
 ) -> NotebookResponse:
     try:
-        notebook = update_notebook(
+        notebook = _repository().update(
             notebook_id,
             name=payload.name,
             description=payload.description,
@@ -203,7 +198,7 @@ def delete_notebook_route(
     notebook_id: Annotated[int, Path(ge=1)],
 ) -> DeleteResponse:
     try:
-        deleted = delete_notebook(notebook_id)
+        deleted = _repository().delete(notebook_id)
     except NotebookNotEmptyError as error:
         raise ApiError(
             status_code=409,
@@ -228,7 +223,7 @@ def get_notebook_documents(
     q: Annotated[str | None, Query(max_length=255)] = None,
 ) -> DocumentListResponse:
     _notebook_or_404(notebook_id)
-    documents = list_document_records(
+    documents = _repository().list_documents(
         notebook_id=notebook_id,
         search=q,
     )
@@ -248,7 +243,7 @@ def put_document_in_notebook(
 ) -> DocumentResponse:
     try:
         return _document_response(
-            assign_document_to_notebook(document_id, notebook_id)
+            _repository().assign_document(document_id, notebook_id)
         )
     except NotebookNotFoundError as error:
         raise ApiError(
@@ -280,7 +275,7 @@ def remove_document_from_named_notebook(
             code="document_not_in_notebook",
             message="Document is not assigned to this notebook.",
         )
-    remove_document_from_notebook(document_id)
+    _repository().remove_document(document_id)
     return _document_response(_document_or_404(document_id))
 
 
@@ -311,7 +306,7 @@ def get_documents(
                 )
 
     try:
-        documents = list_document_records(
+        documents = _repository().list_documents(
             notebook_id=parsed_notebook_id,
             unsorted_only=unsorted_only,
             search=q,
@@ -379,7 +374,7 @@ def upload_document(
     document_id = int(result["document_id"])
     if result["status"] == "indexed" and notebook_id is not None:
         try:
-            assign_document_to_notebook(document_id, notebook_id)
+            _repository().assign_document(document_id, notebook_id)
         except Exception:
             delete_document(document_id)
             raise
@@ -410,10 +405,10 @@ def patch_document_notebook(
 ) -> DocumentResponse:
     try:
         if payload.notebook_id is None:
-            remove_document_from_notebook(document_id)
+            _repository().remove_document(document_id)
             document = _document_or_404(document_id)
         else:
-            document = assign_document_to_notebook(
+            document = _repository().assign_document(
                 document_id,
                 payload.notebook_id,
             )

@@ -5,8 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Path
 
 import backend.rag.chat_service as chat_service
-import backend.study.database as study_database
 from backend.api.errors import ApiError
+from backend.application.dependencies import get_application_dependencies
 from backend.api.routes.memory import memory_proposal_response
 from backend.api.schemas import (
     ChatRequest,
@@ -100,7 +100,7 @@ def _scope_from_chat_request(
 def _session_or_404(
     session_id: int,
 ) -> StoredStudySession:
-    session = study_database.get_study_session(session_id)
+    session = get_application_dependencies().study_sessions.get(session_id)
 
     if session is None:
         raise ApiError(
@@ -161,18 +161,19 @@ def update_interaction_outcome(
     interaction_id: Annotated[int, Path(ge=1)],
     payload: InteractionOutcomeUpdate,
 ) -> StudyInteractionResponse:
-    if study_database.get_study_interaction(interaction_id) is None:
+    repository = get_application_dependencies().study_sessions
+    if repository.get_interaction(interaction_id) is None:
         raise ApiError(
             status_code=404,
             code="study_interaction_not_found",
             message="Study interaction was not found.",
         )
 
-    interaction = study_database.update_interaction_outcome(
+    interaction = repository.update_outcome(
         interaction_id,
         payload.outcome,
     )
-    sources = study_database.list_interaction_sources(
+    sources = repository.list_sources(
         interaction_id
     )
     return study_interaction_response(
@@ -186,7 +187,7 @@ def update_interaction_outcome(
     response_model=StudySessionListResponse,
 )
 def list_study_sessions() -> StudySessionListResponse:
-    sessions = study_database.list_study_sessions()
+    sessions = get_application_dependencies().study_sessions.list()
     return StudySessionListResponse(
         items=[
             study_session_response(session)
@@ -204,7 +205,8 @@ def get_study_session(
     session_id: Annotated[int, Path(ge=1)],
 ) -> SessionDetailResponse:
     session = _session_or_404(session_id)
-    interactions = study_database.list_session_interactions(
+    repository = get_application_dependencies().study_sessions
+    interactions = repository.list_interactions(
         session_id
     )
     return SessionDetailResponse(
@@ -212,7 +214,7 @@ def get_study_session(
         interactions=[
             study_interaction_response(
                 interaction,
-                study_database.list_interaction_sources(
+                repository.list_sources(
                     interaction.id
                 ),
             )
@@ -226,7 +228,8 @@ def get_study_session(
     response_model=StudySessionResponse,
 )
 def end_active_study_session() -> StudySessionResponse:
-    active_session = study_database.get_active_study_session()
+    repository = get_application_dependencies().study_sessions
+    active_session = repository.get_active()
 
     if active_session is None:
         raise ApiError(
@@ -235,7 +238,7 @@ def end_active_study_session() -> StudySessionResponse:
             message="There is no active study session to end.",
         )
 
-    completed = study_database.end_study_session(
+    completed = repository.end(
         active_session.id
     )
     return study_session_response(completed)

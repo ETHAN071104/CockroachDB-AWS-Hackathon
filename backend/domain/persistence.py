@@ -80,3 +80,14 @@ class AdaptationEvent:
     applied_changes: dict[str, object]
     reason: str
     created_at: str
+
+
+@dataclass(frozen=True)
+class BlobMetadata:
+    document_id: int
+    filename: str
+    mime_type: str
+    size_bytes: int
+    content_hash: str
+    created_at: str
+    updated_at: str

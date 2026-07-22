@@ -236,7 +236,7 @@ def submit_quiz(
 
         generated = _deserialize_generated_quiz(state.payload)
         run_result = score_quiz(generated, responses)
-        with dependencies.unit_of_work():
+        def persist(_unit_of_work):
             stored_attempt, stored_questions = dependencies.quizzes.save_run_result(
                 run_result
             )
@@ -252,6 +252,10 @@ def submit_quiz(
                 "completed",
                 {"attempt_id": stored_attempt.id, "action": "submitted"},
             )
+            return stored_attempt, stored_questions, learning
+        stored_attempt, stored_questions, learning = dependencies.unit_of_work().run(
+            persist
+        )
 
     sources_by_index = {source.index: source for source in generated.sources}
     feedback: list[QuizQuestionFeedback] = []

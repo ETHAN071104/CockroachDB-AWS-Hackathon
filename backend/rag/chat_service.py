@@ -65,16 +65,15 @@ def run_chat(
         _study_source_input(source)
         for source in retrieved_sources
     ]
-    with dependencies.unit_of_work():
-        interaction, stored_sources = (
-            dependencies.study_sessions.insert_interaction_with_sources(
+    def persist(_unit_of_work):
+        return dependencies.study_sessions.insert_interaction_with_sources(
             session_id=session.id,
             question=cleaned_question,
             answer=answer,
             sources=source_inputs,
             outcome="unrated",
-            )
         )
+    interaction, stored_sources = dependencies.unit_of_work().run(persist)
 
     proposal: PendingMemoryProposal | None = None
 

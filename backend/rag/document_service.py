@@ -7,6 +7,7 @@ from backend.application.vector_outbox import (
     VectorOutboxService,
     VectorSynchronizationError,
 )
+from backend.rag import config
 from backend.rag.database import StoredDocument
 from backend.repositories.chroma import ChromaDocumentVectorRepository
 
@@ -31,22 +32,25 @@ def delete_document(document_id: int) -> StoredDocument:
 
     outbox = VectorOutboxService(
         dependencies.vector_outbox,
-        ChromaDocumentVectorRepository(vector_store_service.get_vector_store),
+        (
+            ChromaDocumentVectorRepository(vector_store_service.get_vector_store)
+            if config.PERSISTENCE_BACKEND == "sqlite"
+            else dependencies.document_vectors
+        ),
         dependencies.memory_vectors,
     )
-    try:
-        with dependencies.unit_of_work() as unit_of_work:
-            if not dependencies.documents.delete(document_id):
-                raise DocumentDeletionError(
-                    "The document changed before it could be deleted."
-                )
-            job = dependencies.vector_outbox.enqueue(
-                "document",
-                str(document_id),
-                "delete",
-                {},
+    def persist(unit_of_work):
+        if not dependencies.documents.delete(document_id):
+            raise DocumentDeletionError(
+                "The document changed before it could be deleted."
             )
-            unit_of_work.after_commit(lambda: outbox.process(job.id))
+        job = dependencies.vector_outbox.enqueue(
+            "document", str(document_id), "delete", {}
+        )
+        unit_of_work.after_commit(lambda: outbox.process(job.id))
+
+    try:
+        dependencies.unit_of_work().run(persist)
     except VectorSynchronizationError as error:
         raise DocumentDeletionError(
             "The document was deleted, but vector cleanup is pending durable "

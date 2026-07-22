@@ -1,5 +1,6 @@
 from backend.repositories.interfaces.protocols import (
     AdaptationEventRepository,
+    BlobStorage,
     DashboardRepository,
     DocumentRepository,
     DocumentVectorRepository,
@@ -19,6 +20,7 @@ from backend.repositories.interfaces.protocols import (
 
 __all__ = [
     "AdaptationEventRepository",
+    "BlobStorage",
     "DashboardRepository",
     "DocumentRepository",
     "DocumentVectorRepository",

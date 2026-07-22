@@ -104,6 +104,65 @@ class SQLiteNotebookRepository:
             workspace_id=self.workspace_id,
         )
 
+    def update(
+        self,
+        notebook_id: int,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Any:
+        return self._module().update_notebook(
+            notebook_id,
+            name=name,
+            description=description,
+            workspace_id=self.workspace_id,
+        )
+
+    def delete(self, notebook_id: int) -> bool:
+        return self._module().delete_notebook(
+            notebook_id,
+            workspace_id=self.workspace_id,
+        )
+
+    def assign_document(self, document_id: int, notebook_id: int) -> Any:
+        return self._module().assign_document_to_notebook(
+            document_id,
+            notebook_id,
+            workspace_id=self.workspace_id,
+        )
+
+    def remove_document(self, document_id: int) -> bool:
+        return self._module().remove_document_from_notebook(
+            document_id,
+            workspace_id=self.workspace_id,
+        )
+
+    def count_documents(self, notebook_id: int | None) -> int:
+        return self._module().count_notebook_documents(
+            notebook_id,
+            workspace_id=self.workspace_id,
+        )
+
+    def get_document(self, document_id: int) -> Any | None:
+        return self._module().get_document_record(
+            document_id,
+            workspace_id=self.workspace_id,
+        )
+
+    def list_documents(
+        self,
+        *,
+        notebook_id: int | None = None,
+        unsorted_only: bool = False,
+        search: str | None = None,
+    ) -> list[Any]:
+        return self._module().list_document_records(
+            notebook_id=notebook_id,
+            unsorted_only=unsorted_only,
+            search=search,
+            workspace_id=self.workspace_id,
+        )
+
     def get_document_notebook_id(self, document_id: int) -> int | None:
         return self._module().get_document_notebook_id(
             document_id,
@@ -153,6 +212,11 @@ class SQLiteIntelligenceRepository:
             workspace_id=self.workspace_id,
         )
 
+    def fingerprint_for_scope(self, scope_kind: str, scope_key: object = None) -> str:
+        # The legacy helper currently derives fingerprints from the selected
+        # local store; repository ownership has already constrained callers.
+        return self._module().fingerprint_for_scope(scope_kind, scope_key)
+
 
 class SQLiteStudySessionRepository:
     def __init__(self, workspace_id: str = DEFAULT_WORKSPACE_ID) -> None:
@@ -169,6 +233,9 @@ class SQLiteStudySessionRepository:
             workspace_id=self.workspace_id
         )
 
+    def get_active(self) -> Any | None:
+        return self._module().get_active_study_session(workspace_id=self.workspace_id)
+
     def insert_interaction_with_sources(self, **values: Any) -> tuple[Any, list[Any]]:
         return self._module().insert_study_interaction_with_sources(
             **values,
@@ -180,6 +247,9 @@ class SQLiteStudySessionRepository:
             session_id,
             workspace_id=self.workspace_id,
         )
+
+    def get_interaction(self, interaction_id: int) -> Any | None:
+        return self._module().get_study_interaction(interaction_id)
 
     def list(self) -> list[Any]:
         return self._module().list_study_sessions(workspace_id=self.workspace_id)

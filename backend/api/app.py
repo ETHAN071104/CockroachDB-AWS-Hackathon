@@ -28,9 +28,19 @@ from backend.memory.vector_store import probe_memory_vector_store
 from backend.rag.database import initialize_database
 from backend.rag.vector_store import probe_vector_store
 from backend.study.database import initialize_study_database
+from backend.rag import config
 
 
 def initialize_storage() -> dict[str, Any]:
+    if config.PERSISTENCE_BACKEND == "cockroach":
+        initialize_application_foundation()
+        from backend.infrastructure.cockroach.health import cockroach_health
+
+        status = cockroach_health()
+        return {
+            "document_vector_status": {"status": status["status"], "collection_present": True},
+            "memory_vector_status": {"status": status["status"], "collection_present": True},
+        }
     initialize_database()
     initialize_memory_database()
     initialize_study_database()

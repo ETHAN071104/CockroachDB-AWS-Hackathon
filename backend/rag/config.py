@@ -24,6 +24,71 @@ MEMORY_CHROMA_PATH = DATA_DIR / "memory_chroma"
 
 
 # ============================================================
+# PERSISTENCE BACKEND
+# ============================================================
+
+PERSISTENCE_BACKEND = os.getenv(
+    "PERSISTENCE_BACKEND",
+    "sqlite",
+).strip().lower()
+
+SUPPORTED_PERSISTENCE_BACKENDS = {
+    "sqlite",
+    "cockroach",
+}
+
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DATABASE_POOL_SIZE = int(os.getenv("DATABASE_POOL_SIZE", "5"))
+DATABASE_MAX_OVERFLOW = int(os.getenv("DATABASE_MAX_OVERFLOW", "5"))
+DATABASE_CONNECT_TIMEOUT = int(os.getenv("DATABASE_CONNECT_TIMEOUT", "15"))
+DATABASE_MAX_TRANSACTION_RETRIES = int(
+    os.getenv("DATABASE_MAX_TRANSACTION_RETRIES", "5")
+)
+DATABASE_RETRY_BASE_DELAY_MS = int(
+    os.getenv("DATABASE_RETRY_BASE_DELAY_MS", "100")
+)
+EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "384"))
+ENABLE_VECTOR_INDEX = (
+    os.getenv("ENABLE_VECTOR_INDEX", "true").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+
+
+def validate_persistence_config() -> None:
+    """Fail before startup when the selected backend is unsafe or incomplete."""
+    if PERSISTENCE_BACKEND not in SUPPORTED_PERSISTENCE_BACKENDS:
+        supported = ", ".join(sorted(SUPPORTED_PERSISTENCE_BACKENDS))
+        raise RuntimeError(
+            "Unsupported PERSISTENCE_BACKEND. "
+            f"Supported values: {supported}."
+        )
+    if PERSISTENCE_BACKEND == "cockroach" and not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL is required when PERSISTENCE_BACKEND=cockroach."
+        )
+    numeric_settings = {
+        "DATABASE_POOL_SIZE": DATABASE_POOL_SIZE,
+        "DATABASE_MAX_OVERFLOW": DATABASE_MAX_OVERFLOW,
+        "DATABASE_CONNECT_TIMEOUT": DATABASE_CONNECT_TIMEOUT,
+        "DATABASE_MAX_TRANSACTION_RETRIES": DATABASE_MAX_TRANSACTION_RETRIES,
+        "DATABASE_RETRY_BASE_DELAY_MS": DATABASE_RETRY_BASE_DELAY_MS,
+        "EMBEDDING_DIMENSION": EMBEDDING_DIMENSION,
+    }
+    for name, value in numeric_settings.items():
+        minimum = 0 if name in {
+            "DATABASE_MAX_OVERFLOW",
+            "DATABASE_MAX_TRANSACTION_RETRIES",
+            "DATABASE_RETRY_BASE_DELAY_MS",
+        } else 1
+        if value < minimum:
+            raise RuntimeError(f"{name} must be at least {minimum}.")
+    if PERSISTENCE_BACKEND == "cockroach" and EMBEDDING_DIMENSION != 384:
+        raise RuntimeError(
+            "CockroachDB schema requires EMBEDDING_DIMENSION=384."
+        )
+
+
+# ============================================================
 # CHROMA COLLECTIONS
 # ============================================================
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.rag import config
 from backend.rag.config import LLM_PROVIDER
 from backend.rag.database import get_connection
 
@@ -9,6 +10,10 @@ API_VERSION = "0.7.0"
 
 
 def check_database() -> dict[str, str]:
+    if config.PERSISTENCE_BACKEND == "cockroach":
+        from backend.infrastructure.cockroach.health import cockroach_health
+
+        return {"status": str(cockroach_health()["status"])}
     with get_connection() as connection:
         connection.execute("SELECT 1").fetchone()
     return {"status": "ok"}

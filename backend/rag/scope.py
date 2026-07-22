@@ -8,10 +8,8 @@ from uuid import UUID
 from backend.rag.notebooks import (
     DocumentNotFoundError,
     NotebookNotFoundError,
-    get_document_record,
-    get_notebook,
-    list_document_records,
 )
+from backend.application.dependencies import get_application_dependencies
 
 
 ChromaFilter: TypeAlias = dict[str, Any]
@@ -139,7 +137,8 @@ def resolve_retrieval_scope(
         )
 
     if scope.notebook_id is not None:
-        notebook = get_notebook(scope.notebook_id)
+        notebooks = get_application_dependencies().notebooks
+        notebook = notebooks.get(scope.notebook_id)
 
         if notebook is None:
             raise NotebookNotFoundError(
@@ -148,7 +147,7 @@ def resolve_retrieval_scope(
 
         document_ids = tuple(
             record.id
-            for record in list_document_records(
+            for record in notebooks.list_documents(
                 notebook_id=scope.notebook_id
             )
         )
@@ -159,8 +158,9 @@ def resolve_retrieval_scope(
         )
 
     if scope.document_ids is not None:
+        notebooks = get_application_dependencies().notebooks
         for document_id in scope.document_ids:
-            if get_document_record(document_id) is None:
+            if notebooks.get_document(document_id) is None:
                 raise DocumentNotFoundError(
                     f"Document ID {document_id} does not exist."
                 )
@@ -195,7 +195,7 @@ def resolve_retrieval_scope(
     )
 
     for document_id in document_ids:
-        if get_document_record(document_id) is None:
+        if get_application_dependencies().notebooks.get_document(document_id) is None:
             raise DocumentNotFoundError(
                 "A topic source references missing document ID "
                 f"{document_id}."

@@ -17,15 +17,16 @@ from backend.rag.config import (
 )
 from backend.application.dependencies import get_application_dependencies
 from backend.application.vector_outbox import VectorOutboxService
+from backend.rag import config
 from backend.rag.loaders import (
     SUPPORTED_EXTENSIONS,
     get_mime_type,
     load_documents_from_bytes,
     validate_file_path,
 )
+from backend.repositories.interfaces import RepositoryConflictError
 from backend.rag.vector_store import get_vector_store
 from backend.repositories.chroma import ChromaDocumentVectorRepository
-from backend.repositories.interfaces import RepositoryConflictError
 
 
 _WINDOWS_RESERVED_FILENAMES = {
@@ -374,8 +375,7 @@ def index_file_bytes(
     if not loaded_documents:
         raise ValueError("No readable content was extracted from the file.")
 
-    try:
-        with dependencies.unit_of_work() as unit_of_work:
+    def persist(unit_of_work):
             concurrent_document = dependencies.documents.find_by_hash(file_hash)
             if concurrent_document is not None:
                 return {
@@ -402,6 +402,7 @@ def index_file_bytes(
                 raise ValueError("The document produced no usable text chunks.")
             chunk_ids = create_chunk_ids(document_id, chunks)
             dependencies.documents.update_chunk_count(document_id, len(chunks))
+            dependencies.document_vectors.stage_chunks(chunks, chunk_ids)
             job = dependencies.vector_outbox.enqueue(
                 "document",
                 str(document_id),
@@ -419,10 +420,25 @@ def index_file_bytes(
             )
             outbox = VectorOutboxService(
                 dependencies.vector_outbox,
-                ChromaDocumentVectorRepository(get_vector_store),
+                (
+                    ChromaDocumentVectorRepository(get_vector_store)
+                    if config.PERSISTENCE_BACKEND == "sqlite"
+                    else dependencies.document_vectors
+                ),
                 dependencies.memory_vectors,
             )
             unit_of_work.after_commit(lambda: outbox.process(job.id))
+            return {
+                "status": "indexed",
+                "document_id": document_id,
+                "filename": safe_filename,
+                "mime_type": mime_type,
+                "pages": len(loaded_documents),
+                "chunk_count": len(chunks),
+            }
+
+    try:
+        return dependencies.unit_of_work().run(persist)
     except RepositoryConflictError:
         concurrent_document = dependencies.documents.find_by_hash(file_hash)
         if concurrent_document is None:
@@ -434,12 +450,3 @@ def index_file_bytes(
             "mime_type": concurrent_document.mime_type,
             "chunk_count": concurrent_document.chunk_count,
         }
-
-    return {
-        "status": "indexed",
-        "document_id": document_id,
-        "filename": safe_filename,
-        "mime_type": mime_type,
-        "pages": len(loaded_documents),
-        "chunk_count": len(chunks),
-    }
