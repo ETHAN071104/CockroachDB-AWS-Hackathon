@@ -288,8 +288,7 @@ def extract_json_object(
 
     if start == -1 or end == -1 or end < start:
         raise RuntimeError(
-            "The session-summary model did not return JSON.\n"
-            f"Raw output:\n{cleaned}"
+            "The session-summary model did not return a JSON object."
         )
 
     return cleaned[start:end + 1]
@@ -376,8 +375,7 @@ def generate_session_summary(
 
     except Exception as error:
         raise RuntimeError(
-            "The session-summary model returned invalid JSON.\n"
-            f"Raw output:\n{raw_text}"
+            "The session-summary model returned invalid JSON."
         ) from error
 
     validate_generated_summary(

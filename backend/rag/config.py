@@ -53,6 +53,31 @@ ENABLE_VECTOR_INDEX = (
     in {"1", "true", "yes", "on"}
 )
 
+ALLOW_LEGACY_DEFAULT_WORKSPACE = (
+    os.getenv("ALLOW_LEGACY_DEFAULT_WORKSPACE", "false").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+GUEST_SESSION_TOKEN_PEPPER = os.getenv(
+    "GUEST_SESSION_TOKEN_PEPPER",
+    "",
+).strip()
+_GUEST_SESSION_TTL_DAYS_RAW = os.getenv(
+    "GUEST_SESSION_TTL_DAYS",
+    "",
+).strip()
+GUEST_SESSION_TTL_DAYS = (
+    int(_GUEST_SESSION_TTL_DAYS_RAW)
+    if _GUEST_SESSION_TTL_DAYS_RAW
+    else None
+)
+GUEST_SESSION_LAST_SEEN_MINUTES = int(
+    os.getenv("GUEST_SESSION_LAST_SEEN_MINUTES", "5")
+)
+GUEST_SESSION_CREATION_LIMIT_PER_MINUTE = int(
+    os.getenv("GUEST_SESSION_CREATION_LIMIT_PER_MINUTE", "30")
+)
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "").strip().rstrip("/")
+
 
 def validate_persistence_config() -> None:
     """Fail before startup when the selected backend is unsafe or incomplete."""
@@ -85,6 +110,34 @@ def validate_persistence_config() -> None:
     if PERSISTENCE_BACKEND == "cockroach" and EMBEDDING_DIMENSION != 384:
         raise RuntimeError(
             "CockroachDB schema requires EMBEDDING_DIMENSION=384."
+        )
+    if GUEST_SESSION_TTL_DAYS is not None and not (
+        1 <= GUEST_SESSION_TTL_DAYS <= 3650
+    ):
+        raise RuntimeError(
+            "GUEST_SESSION_TTL_DAYS must be empty or between 1 and 3650."
+        )
+    if GUEST_SESSION_LAST_SEEN_MINUTES < 1:
+        raise RuntimeError(
+            "GUEST_SESSION_LAST_SEEN_MINUTES must be at least 1."
+        )
+    if GUEST_SESSION_CREATION_LIMIT_PER_MINUTE < 1:
+        raise RuntimeError(
+            "GUEST_SESSION_CREATION_LIMIT_PER_MINUTE must be at least 1."
+        )
+
+
+def guest_session_configured() -> bool:
+    return len(GUEST_SESSION_TOKEN_PEPPER.encode("utf-8")) >= 32
+
+
+def validate_guest_session_config() -> None:
+    if ALLOW_LEGACY_DEFAULT_WORKSPACE:
+        return
+    if not guest_session_configured():
+        raise RuntimeError(
+            "GUEST_SESSION_TOKEN_PEPPER must contain at least 32 bytes "
+            "when legacy workspace access is disabled."
         )
 
 

@@ -53,6 +53,7 @@ class _IncludedFile:
 
 def build_study_export(
     *,
+    workspace_id: str | None = None,
     database_path: Path | None = None,
     document_chroma_path: Path | None = None,
     memory_chroma_path: Path | None = None,
@@ -62,7 +63,12 @@ def build_study_export(
 ) -> ExportArtifact:
     """Create one allowlisted ZIP export in an isolated temporary directory."""
     if rag_config.PERSISTENCE_BACKEND == "cockroach":
+        if workspace_id is None:
+            raise ExportCreationError(
+                "A workspace-scoped CockroachDB export is required."
+            )
         return _build_cockroach_export(
+            workspace_id=workspace_id,
             temp_parent=temp_parent,
             created_at=created_at,
             app_version=app_version,
@@ -143,12 +149,14 @@ def build_study_export(
 
 def _build_cockroach_export(
     *,
+    workspace_id: str,
     temp_parent: Path | None,
     created_at: datetime | None,
     app_version: str,
 ) -> ExportArtifact:
     """Create a credential-free logical snapshot without touching SQLite/Chroma."""
     from sqlalchemy import text
+    from uuid import UUID
 
     from backend.repositories.cockroach.connection import get_engine
 
@@ -178,12 +186,32 @@ def _build_cockroach_export(
             "credentials_recorded": False,
             "tables": {},
         }
+        workspace_uuid = UUID(workspace_id)
         with get_engine().connect() as connection:
             tables: dict[str, object] = {}
             for table_name in allowlist:
-                rows = connection.execute(text(f"SELECT * FROM {table_name}")).mappings().all()
+                if table_name == "workspaces":
+                    rows = connection.execute(
+                        text(
+                            "SELECT name, created_at, updated_at "
+                            "FROM workspaces WHERE id=:workspace_id"
+                        ),
+                        {"workspace_id": workspace_uuid},
+                    ).mappings().all()
+                else:
+                    rows = connection.execute(
+                        text(
+                            f"SELECT * FROM {table_name} "
+                            "WHERE workspace_id=:workspace_id"
+                        ),
+                        {"workspace_id": workspace_uuid},
+                    ).mappings().all()
                 tables[table_name] = [
-                    {key: _logical_export_value(value) for key, value in row.items()}
+                    {
+                        key: _logical_export_value(value)
+                        for key, value in row.items()
+                        if key != "workspace_id"
+                    }
                     for row in rows
                 ]
             payload["tables"] = tables

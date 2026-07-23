@@ -5,12 +5,13 @@ from typing import Annotated
 from fastapi import APIRouter, Path
 
 import backend.rag.chat_service as chat_service
-from backend.api.errors import ApiError
+from backend.api.errors import ApiError, map_exception
 from backend.application.dependencies import get_application_dependencies
 from backend.api.routes.memory import memory_proposal_response
 from backend.api.schemas import (
     ChatRequest,
     ChatResponse,
+    FeatureRedirectResponse,
     InteractionOutcomeUpdate,
     SessionDetailResponse,
     StudyInteractionResponse,
@@ -136,6 +137,12 @@ def chat(payload: ChatRequest) -> ChatResponse:
             code="invalid_chat_request",
             message=str(error),
         ) from error
+    except Exception as error:
+        raise map_exception(
+            error,
+            fallback_code="INTERNAL_ERROR",
+            context="chat",
+        ) from error
 
     return ChatResponse(
         session_id=result.session.id,
@@ -150,6 +157,22 @@ def chat(payload: ChatRequest) -> ChatResponse:
             if result.memory_proposal is not None
             else None
         ),
+        type=result.type,
+        intent=result.intent,
+        evidence_status=result.evidence_status,
+        redirect=(
+            FeatureRedirectResponse(
+                target=result.redirect.target,
+                title=result.redirect.title,
+                message=result.redirect.message,
+                action_label=result.redirect.action_label,
+                original_prompt=result.redirect.original_prompt,
+                suggested_prompt=result.redirect.suggested_prompt,
+            )
+            if result.redirect is not None
+            else None
+        ),
+        suggested_question=result.suggested_question,
     )
 
 

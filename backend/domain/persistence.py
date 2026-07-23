@@ -16,6 +16,20 @@ class Workspace:
 
 
 @dataclass(frozen=True)
+class GuestSession:
+    id: str
+    workspace_id: str
+    status: str
+    created_at: str
+    updated_at: str
+    last_seen_at: str | None
+    expires_at: str | None
+    revoked_at: str | None
+    version: int
+    session_label: str | None = None
+
+
+@dataclass(frozen=True)
 class WorkflowState:
     id: str
     workspace_id: str

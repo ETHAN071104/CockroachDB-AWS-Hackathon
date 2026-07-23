@@ -12,6 +12,9 @@ from backend.repositories.cockroach.foundation import (
     CockroachWorkspaceRepository,
 )
 from backend.repositories.cockroach.intelligence import CockroachIntelligenceRepository
+from backend.repositories.cockroach.guest_sessions import (
+    CockroachGuestSessionRepository,
+)
 from backend.repositories.cockroach.library import (
     CockroachBlobStorage,
     CockroachDocumentRepository,
@@ -38,6 +41,7 @@ __all__ = [
     "CockroachDocumentRepository",
     "CockroachDocumentVectorRepository",
     "CockroachIntelligenceRepository",
+    "CockroachGuestSessionRepository",
     "CockroachLearnerMemoryRepository",
     "CockroachLearningSignalRepository",
     "CockroachMemoryVectorRepository",

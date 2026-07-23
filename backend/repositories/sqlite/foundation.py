@@ -132,6 +132,46 @@ def initialize_foundation_schema() -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS guest_sessions (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                creation_key_hash TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL
+                    CHECK (status IN ('active', 'revoked', 'expired')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_seen_at TEXT,
+                expires_at TEXT,
+                revoked_at TEXT,
+                version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+                session_label TEXT,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+                CHECK (length(token_hash) = 64),
+                CHECK (length(creation_key_hash) = 64),
+                CHECK (
+                    (status = 'revoked' AND revoked_at IS NOT NULL)
+                    OR
+                    (status IN ('active', 'expired') AND revoked_at IS NULL)
+                )
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_guest_sessions_workspace_status
+            ON guest_sessions(workspace_id, status, created_at)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_guest_sessions_active_expiry
+            ON guest_sessions(expires_at)
+            WHERE status = 'active' AND expires_at IS NOT NULL
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS vector_outbox (
                 id TEXT PRIMARY KEY,
                 workspace_id TEXT NOT NULL,

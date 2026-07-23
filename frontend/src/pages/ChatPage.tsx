@@ -26,6 +26,8 @@ import {
   Card,
   ConfirmationDialog,
   EmptyState,
+  ErrorNotice,
+  FeatureRedirectCard,
   Notice,
   OutcomeBadge,
   PageHeader,
@@ -176,7 +178,9 @@ export function ChatPage() {
       ]);
       setOutcomes((current) => ({
         ...current,
-        [response.interaction_id]: "unrated",
+        ...(response.type === "feature_redirect"
+          ? {}
+          : { [response.interaction_id]: "unrated" }),
       }));
       setQuestion("");
       setEndedSessionId(null);
@@ -221,7 +225,7 @@ export function ChatPage() {
       <PageHeader
         eyebrow="Grounded study"
         title="Study chat"
-        description="Ask questions against your local sources. Every answer keeps its citation lineage."
+        description="Ask questions about your uploaded study materials. For weakness analysis, use Coaching."
         actions={
           activeSessionId ? (
             <Button
@@ -316,7 +320,7 @@ export function ChatPage() {
               ) : (
                 <Tags size={18} aria-hidden="true" />
               )}
-              <span>{selectedScopeLabel}</span>
+              <span>Active source: {selectedScopeLabel}</span>
             </div>
 
             {notebooks.error || documents.error || topics.error ? (
@@ -354,62 +358,79 @@ export function ChatPage() {
                         <p>{askedQuestion}</p>
                       </div>
                       <Card className="chat-message chat-message--assistant">
-                        <div className="chat-message__heading">
-                          <p className="chat-message__label">Study companion</p>
-                          <OutcomeBadge
-                            outcome={outcomes[response.interaction_id] ?? "unrated"}
-                          />
-                        </div>
-                        <div className="prose-copy">{response.answer}</div>
-
-                        {response.sources.length > 0 ? (
-                          <details className="citation-disclosure">
-                            <summary>
-                              {response.sources.length} cited source
-                              {response.sources.length === 1 ? "" : "s"}
-                            </summary>
-                            <div className="source-grid">
-                              {response.sources.map((source) => (
-                                <SourceCard
-                                  key={`${response.interaction_id}-${source.index}`}
-                                  source={source}
-                                />
-                              ))}
-                            </div>
-                          </details>
+                        {response.type === "feature_redirect" && response.redirect ? (
+                          <FeatureRedirectCard redirect={response.redirect} />
                         ) : (
-                          <Notice tone="warning">No citations were returned.</Notice>
+                          <>
+                            <div className="chat-message__heading">
+                              <p className="chat-message__label">Study companion</p>
+                              <OutcomeBadge
+                                outcome={outcomes[response.interaction_id] ?? "unrated"}
+                              />
+                            </div>
+                            <div className="prose-copy">{response.answer}</div>
+
+                            {response.suggested_question ? (
+                              <Notice tone="info" title="Try a document-grounded question">
+                                “{response.suggested_question}”
+                              </Notice>
+                            ) : null}
+
+                            {response.sources.length > 0 ? (
+                              <details className="citation-disclosure">
+                                <summary>
+                                  {response.sources.length}{' '}
+                                  {response.evidence_status === "grounded"
+                                    ? "cited"
+                                    : "retrieved"}{' '}
+                                  source{response.sources.length === 1 ? "" : "s"}
+                                </summary>
+                                <div className="source-grid">
+                                  {response.sources.map((source) => (
+                                    <SourceCard
+                                      key={`${response.interaction_id}-${source.index}`}
+                                      source={source}
+                                    />
+                                  ))}
+                                </div>
+                              </details>
+                            ) : response.evidence_status !== "grounded" ? (
+                              <Notice tone="warning">
+                                No document citations support this response.
+                              </Notice>
+                            ) : null}
+
+                            <fieldset className="outcome-fieldset">
+                              <legend>How well did this answer land?</legend>
+                              <div className="button-group">
+                                {OUTCOME_OPTIONS.map((option) => (
+                                  <Button
+                                    key={option.value}
+                                    variant={
+                                      outcomes[response.interaction_id] === option.value
+                                        ? "primary"
+                                        : "secondary"
+                                    }
+                                    disabled={updateOutcome.isPending}
+                                    aria-pressed={
+                                      outcomes[response.interaction_id] === option.value
+                                    }
+                                    onClick={() =>
+                                      void handleOutcome(
+                                        response.interaction_id,
+                                        option.value,
+                                      )
+                                    }
+                                  >
+                                    {option.label}
+                                  </Button>
+                                ))}
+                              </div>
+                            </fieldset>
+                          </>
                         )}
 
-                        <fieldset className="outcome-fieldset">
-                          <legend>How well did this answer land?</legend>
-                          <div className="button-group">
-                            {OUTCOME_OPTIONS.map((option) => (
-                              <Button
-                                key={option.value}
-                                variant={
-                                  outcomes[response.interaction_id] === option.value
-                                    ? "primary"
-                                    : "secondary"
-                                }
-                                disabled={updateOutcome.isPending}
-                                aria-pressed={
-                                  outcomes[response.interaction_id] === option.value
-                                }
-                                onClick={() =>
-                                  void handleOutcome(
-                                    response.interaction_id,
-                                    option.value,
-                                  )
-                                }
-                              >
-                                {option.label}
-                              </Button>
-                            ))}
-                          </div>
-                        </fieldset>
-
-                        {proposal ? (
+                        {response.type !== "feature_redirect" && proposal ? (
                           <aside
                             className="memory-proposal"
                             aria-labelledby={`proposal-${proposal.proposal_id}`}
@@ -513,10 +534,17 @@ export function ChatPage() {
                 Send question
               </Button>
             </div>
-            {formError || sendMessage.error ? (
+            {formError ? (
               <p id="chat-question-error" className="field-error" role="alert">
-                {formError ?? getErrorMessage(sendMessage.error)}
+                {formError}
               </p>
+            ) : sendMessage.error ? (
+              <div id="chat-question-error">
+                <ErrorNotice
+                  error={sendMessage.error}
+                  onRetry={() => sendMessage.retry()}
+                />
+              </div>
             ) : null}
           </form>
         </div>

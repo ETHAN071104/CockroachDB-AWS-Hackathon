@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Path, Query
 
-from backend.api.errors import ApiError
+from backend.api.errors import ApiError, map_exception
 from backend.api.report_schemas import (
     CoachingActivityResponse,
     CoachingPlanResponse,
@@ -333,11 +333,11 @@ def post_session_summary(
             code="session_summary_unavailable",
             message=str(error),
         ) from error
-    except RuntimeError as error:
-        raise ApiError(
-            status_code=502,
-            code="session_summary_failed",
-            message="Session summary generation failed.",
+    except Exception as error:
+        raise map_exception(
+            error,
+            fallback_code="INTERNAL_ERROR",
+            context="session_summary",
         ) from error
     summary = result.summary
     return SessionSummaryResponse(
@@ -559,11 +559,11 @@ def post_review_action(payload: ReviewGenerateRequest) -> ReviewActionResponse:
             code="scope_not_found",
             message="Review scope was not found.",
         ) from error
-    except RuntimeError as error:
-        raise ApiError(
-            status_code=502,
-            code="review_generation_failed",
-            message="Grounded review generation failed.",
+    except Exception as error:
+        raise map_exception(
+            error,
+            fallback_code="INTERNAL_ERROR",
+            context="review_generation",
         ) from error
     action = result.action
     event = record_adaptation_event(result.adaptation)
@@ -650,11 +650,11 @@ def post_coaching(payload: CoachingRequest) -> CoachingPlanResponse:
             code="invalid_scope",
             message="Coaching request is invalid.",
         ) from error
-    except RuntimeError as error:
-        raise ApiError(
-            status_code=502,
-            code="coaching_generation_failed",
-            message="Grounded coaching generation failed.",
+    except Exception as error:
+        raise map_exception(
+            error,
+            fallback_code="INTERNAL_ERROR",
+            context="coaching_generation",
         ) from error
     event = record_adaptation_event(result.adaptation)
     return CoachingPlanResponse(

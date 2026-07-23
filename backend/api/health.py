@@ -6,7 +6,7 @@ from backend.rag import config
 from backend.rag.config import LLM_PROVIDER
 from backend.rag.database import get_connection
 
-API_VERSION = "0.7.0"
+API_VERSION = "0.8.0"
 
 
 def check_database() -> dict[str, str]:
@@ -36,4 +36,6 @@ def build_health_payload(
         "documents_vector_store": document_vector_status,
         "memory_vector_store": memory_vector_status,
         "llm_provider": LLM_PROVIDER,
+        "persistence_backend": config.PERSISTENCE_BACKEND,
+        "guest_sessions_configured": config.guest_session_configured(),
     }

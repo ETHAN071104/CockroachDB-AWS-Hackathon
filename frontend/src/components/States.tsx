@@ -81,7 +81,7 @@ export interface ErrorStateProps {
 }
 
 export function ErrorState({
-  title = "Something went wrong",
+  title = "Agentbook could not load this content",
   message,
   onRetry,
   retryLabel = "Try again",

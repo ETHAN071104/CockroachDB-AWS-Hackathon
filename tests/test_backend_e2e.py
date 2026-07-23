@@ -10,6 +10,11 @@ from unittest.mock import patch
 
 import backend.study.database as study_database
 import backend.study.integrity as study_integrity
+import backend.rag.database as rag_database
+
+from backend.application.dependencies import configure_application_dependencies
+from backend.memory.database import initialize_memory_database
+from backend.repositories.sqlite import initialize_foundation_schema
 
 from backend.study.planner import (
     build_adaptive_study_plan,
@@ -35,6 +40,7 @@ class BackendEndToEndTest(unittest.TestCase):
     """
 
     def test_complete_backend_workflow(self) -> None:
+        self.addCleanup(configure_application_dependencies, None)
         with tempfile.TemporaryDirectory() as temporary_dir:
             database_path = (
                 Path(temporary_dir)
@@ -66,6 +72,15 @@ class BackendEndToEndTest(unittest.TestCase):
 
             with (
                 patch.object(
+                    rag_database,
+                    "DATABASE_PATH",
+                    database_path,
+                ),
+                patch.object(
+                    rag_database,
+                    "ensure_directories",
+                ),
+                patch.object(
                     study_database,
                     "get_connection",
                     temporary_connection,
@@ -76,6 +91,10 @@ class BackendEndToEndTest(unittest.TestCase):
                     temporary_connection,
                 ),
             ):
+                rag_database.initialize_database()
+                initialize_memory_database()
+                initialize_foundation_schema()
+                configure_application_dependencies(None)
                 self._run_workflow(
                     temporary_connection
                 )

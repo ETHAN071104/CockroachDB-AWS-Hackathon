@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +24,9 @@ from backend.rag.scope import (
     TopicSourceRepository,
     resolve_retrieval_scope,
 )
+
+
+LOGGER = logging.getLogger("study_companion.rag")
 
 
 @dataclass(frozen=True)
@@ -70,6 +75,7 @@ Rules:
   examples, or emphasis.
 - Do not use outside knowledge.
 - Do not cite a source unless it supports the claim.
+- Include at least one visible source citation in every factual paragraph.
 - If the document excerpts do not contain enough information,
   reply exactly:
   "I could not find sufficient information in the indexed files."
@@ -406,9 +412,9 @@ def answer_question(
 
     except Exception as error:
         # Memory failure should not stop factual document RAG.
-        print(
-            "\nWarning: learner memory retrieval failed: "
-            f"{error}"
+        LOGGER.warning(
+            "Learner memory retrieval failed error_type=%s",
+            type(error).__name__,
         )
 
         memories = []

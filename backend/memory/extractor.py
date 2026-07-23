@@ -155,6 +155,5 @@ def propose_memory_candidate(
 
     except Exception as error:
         raise RuntimeError(
-            "Memory extractor returned invalid JSON.\n"
-            f"Raw model output:\n{raw_text}"
+            "Memory extractor returned invalid JSON."
         ) from error

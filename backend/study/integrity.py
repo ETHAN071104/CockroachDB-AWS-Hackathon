@@ -1115,12 +1115,20 @@ def _check_optional_domain_integrity(
     _check_source_lineage_integrity(connection, tables, issues)
     _check_cache_and_topic_integrity(connection, tables, issues)
 
-def run_study_integrity_check() -> StudyIntegrityReport:
+def run_study_integrity_check(
+    workspace_id: str | None = None,
+) -> StudyIntegrityReport:
     """
     Run read-only integrity checks across study and quiz data.
     """
     if config.PERSISTENCE_BACKEND == "cockroach":
-        return _run_cockroach_integrity_check()
+        if workspace_id is None:
+            from backend.application.dependencies import (
+                get_application_dependencies,
+            )
+
+            workspace_id = get_application_dependencies().workspace_id
+        return _run_cockroach_integrity_check(workspace_id)
     issues: list[IntegrityIssue] = []
     table_counts: list[tuple[str, int]] = []
 
@@ -1195,7 +1203,9 @@ def run_study_integrity_check() -> StudyIntegrityReport:
     )
 
 
-def _run_cockroach_integrity_check() -> StudyIntegrityReport:
+def _run_cockroach_integrity_check(
+    workspace_id: str,
+) -> StudyIntegrityReport:
     from sqlalchemy import text
 
     from backend.repositories.cockroach.connection import get_engine
@@ -1205,6 +1215,7 @@ def _run_cockroach_integrity_check() -> StudyIntegrityReport:
     target_tables = sorted(
         REQUIRED_TABLES | (OPTIONAL_DOMAIN_TABLES - {"memories"}) | {"learner_memories"}
     )
+    workspace = UUID(workspace_id)
     with get_engine().connect() as connection:
         existing = {
             str(value)
@@ -1223,12 +1234,24 @@ def _run_cockroach_integrity_check() -> StudyIntegrityReport:
                     record_type="database_table",
                 )
                 continue
-            count = int(connection.execute(text(f"SELECT count(*) FROM {table_name}")).scalar_one())
+            count = int(
+                connection.execute(
+                    text(
+                        f"SELECT count(*) FROM {table_name} "
+                        "WHERE workspace_id=:workspace_id"
+                    ),
+                    {"workspace_id": workspace},
+                ).scalar_one()
+            )
             table_counts.append((table_name, count))
         if "study_sessions" in existing:
             active = int(
                 connection.execute(
-                    text("SELECT count(*) FROM study_sessions WHERE status='active'")
+                    text(
+                        "SELECT count(*) FROM study_sessions "
+                        "WHERE workspace_id=:workspace_id AND status='active'"
+                    ),
+                    {"workspace_id": workspace},
                 ).scalar_one()
             )
             if active > 1:
@@ -1240,19 +1263,27 @@ def _run_cockroach_integrity_check() -> StudyIntegrityReport:
         orphan_checks = {
             "orphan_study_interaction": (
                 "SELECT count(*) FROM study_interactions i LEFT JOIN study_sessions s "
-                "ON s.id=i.session_id WHERE s.id IS NULL"
+                "ON s.id=i.session_id AND s.workspace_id=i.workspace_id "
+                "WHERE i.workspace_id=:workspace_id AND s.id IS NULL"
             ),
             "orphan_quiz_question": (
                 "SELECT count(*) FROM quiz_question_attempts q LEFT JOIN quiz_attempts a "
-                "ON a.id=q.quiz_attempt_id WHERE a.id IS NULL"
+                "ON a.id=q.quiz_attempt_id AND a.workspace_id=q.workspace_id "
+                "WHERE q.workspace_id=:workspace_id AND a.id IS NULL"
             ),
             "orphan_document_chunk": (
                 "SELECT count(*) FROM document_chunks c LEFT JOIN documents d "
-                "ON d.id=c.document_id WHERE d.id IS NULL"
+                "ON d.id=c.document_id AND d.workspace_id=c.workspace_id "
+                "WHERE c.workspace_id=:workspace_id AND d.id IS NULL"
             ),
         }
         for code, query in orphan_checks.items():
-            if int(connection.execute(text(query)).scalar_one()):
+            if int(
+                connection.execute(
+                    text(query),
+                    {"workspace_id": workspace},
+                ).scalar_one()
+            ):
                 _append_issue(
                     issues, severity="error", code=code,
                     message="A CockroachDB relationship has a missing parent.",

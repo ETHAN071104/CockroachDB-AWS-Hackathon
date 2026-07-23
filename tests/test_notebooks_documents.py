@@ -98,7 +98,9 @@ class NotebookDocumentApiTest(unittest.TestCase):
         )
 
         self.client = self.stack.enter_context(
-            TestClient(app_module.create_app())
+            TestClient(
+                app_module.create_app(allow_legacy_default_workspace=True)
+            )
         )
 
     def test_notebook_crud_counts_and_empty_only_delete(self) -> None:

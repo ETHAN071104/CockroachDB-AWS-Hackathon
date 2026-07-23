@@ -1,4 +1,5 @@
-import { Download, RefreshCw, ShieldCheck, ShieldX } from 'lucide-react';
+import { useState } from 'react';
+import { Download, Plus, RefreshCw, ShieldCheck, ShieldX } from 'lucide-react';
 
 import { apiClient } from '../api/client';
 import type { HealthResponse, IntegrityReport } from '../api/types';
@@ -14,9 +15,13 @@ import {
   SectionHeader,
 } from '../components';
 import { useApiQuery } from '../hooks';
+import { useOptionalGuestSession } from '../guest/GuestSessionProvider';
 import { errorMessage, titleCase } from '../utils/format';
 
 export function SystemPage() {
+  const guest = useOptionalGuestSession();
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
   const health = useApiQuery<HealthResponse>(
     'system-health',
     (signal) => apiClient.get('/api/health', { signal }),
@@ -29,6 +34,24 @@ export function SystemPage() {
   const reloadAll = () => {
     apiClient.invalidate({ prefix: '/api/' });
     void Promise.all([health.reload(), integrity.reload()]);
+  };
+
+  const downloadExport = async () => {
+    setExporting(true);
+    setExportError('');
+    try {
+      const blob = await apiClient.download('/api/system/export');
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'agentbook-study-export.zip';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setExportError(errorMessage(error));
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -66,9 +89,13 @@ export function SystemPage() {
               </Badge>
             </Card>
             <Card>
-              <p className="metric-label">SQLite</p>
+              <p className="metric-label">Persistence</p>
               <p className="metric-value">{titleCase(health.data.database.status)}</p>
-              <p className="supporting-text">Local source of truth</p>
+              <p className="supporting-text">
+                {health.data.persistence_backend === 'cockroach'
+                  ? 'CockroachDB source of truth'
+                  : 'SQLite source of truth'}
+              </p>
             </Card>
             <Card>
               <p className="metric-label">Document index</p>
@@ -157,16 +184,45 @@ export function SystemPage() {
               registries are excluded.
             </p>
           </div>
-          <a className="button button--primary" href="/api/system/export" download>
-            <Download size={18} aria-hidden="true" />
-            <span>Download safe backup</span>
-          </a>
+          <Button
+            icon={<Download size={18} aria-hidden="true" />}
+            loading={exporting}
+            loadingText="Preparing backup…"
+            onClick={() => void downloadExport()}
+          >
+            Download safe backup
+          </Button>
         </Card>
+        {exportError ? <Notice tone="error">{exportError}</Notice> : null}
         <Notice tone="info">
           Restore is intentionally not included in this local MVP. Keep the downloaded ZIP somewhere
           safe.
         </Notice>
       </section>
+
+      {guest ? (
+        <section aria-labelledby="workspace-title">
+          <SectionHeader headingId="workspace-title" title="Study space" />
+          <Card className="backup-card">
+            <div>
+              <h3>Start a new private study space</h3>
+              <p>
+                This browser will switch to a fresh workspace. The previous
+                workspace is not deleted.
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              icon={<Plus size={18} aria-hidden="true" />}
+              loading={guest.startingNew}
+              loadingText="Creating…"
+              onClick={() => void guest.startNewStudySpace()}
+            >
+              Start a new study space
+            </Button>
+          </Card>
+        </section>
+      ) : null}
     </div>
   );
 }

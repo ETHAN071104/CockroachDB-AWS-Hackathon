@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.api.errors import ApiError
+from backend.api.errors import ApiError, map_exception
 from backend.api.schemas import (
     AdaptationResponse,
     LearningSignalResponse,
@@ -9,6 +9,7 @@ from backend.api.schemas import (
     QuizGenerateRequest,
     QuizQuestionFeedbackResponse,
     QuizMemoryProposalResponse,
+    QuizScopeResponse,
     QuizSubmissionResponse,
     QuizSubmitRequest,
     SourceLineageResponse,
@@ -17,6 +18,8 @@ from fastapi import APIRouter, Path
 from typing import Annotated
 
 from backend.rag.scope import RetrievalScope
+from backend.rag.notebooks import DocumentNotFoundError, NotebookNotFoundError
+from backend.rag.scope import TopicNotFoundError
 from backend.study.quiz_api import (
     PendingQuizNotFoundError,
     QuizGenerationRejectedError,
@@ -24,6 +27,7 @@ from backend.study.quiz_api import (
     generate_quiz_for_api,
     submit_quiz,
 )
+from backend.study.quiz_scope import QuizScopeUnavailableError
 
 router = APIRouter(prefix="/api/study", tags=["study"])
 
@@ -65,11 +69,23 @@ def generate_quiz(payload: QuizGenerateRequest) -> PresentedQuizResponse:
             payload.question_count,
             _scope_from_request(payload),
         )
-    except LookupError as error:
+    except (DocumentNotFoundError, NotebookNotFoundError, TopicNotFoundError) as error:
+        if isinstance(error, DocumentNotFoundError):
+            message = "The selected document is unavailable in this workspace."
+        elif isinstance(error, NotebookNotFoundError):
+            message = "The selected notebook is unavailable in this workspace."
+        else:
+            message = "The selected topic is unavailable in this workspace."
         raise ApiError(
             status_code=404,
             code="scope_not_found",
-            message="Quiz scope was not found.",
+            message=message,
+        ) from error
+    except QuizScopeUnavailableError as error:
+        raise ApiError(
+            status_code=422,
+            code=error.code,
+            message=str(error),
         ) from error
     except QuizGenerationRejectedError as error:
         raise ApiError(
@@ -83,11 +99,11 @@ def generate_quiz(payload: QuizGenerateRequest) -> PresentedQuizResponse:
             code="invalid_quiz_request",
             message=str(error),
         ) from error
-    except RuntimeError as error:
-        raise ApiError(
-            status_code=502,
-            code="quiz_generation_failed",
-            message="Grounded quiz generation failed.",
+    except Exception as error:
+        raise map_exception(
+            error,
+            fallback_code="INTERNAL_ERROR",
+            context="quiz_generation",
         ) from error
 
     return PresentedQuizResponse(
@@ -103,6 +119,16 @@ def generate_quiz(payload: QuizGenerateRequest) -> PresentedQuizResponse:
             )
             for question in quiz.questions
         ],
+        scope=QuizScopeResponse(
+            type=quiz.scope.type,
+            label=quiz.scope.label,
+            document_count=quiz.scope.document_count,
+            personalized=quiz.scope.personalized,
+            resolved_document_ids=list(quiz.scope.resolved_document_ids),
+            description=quiz.scope.description,
+            notebook_name=quiz.scope.notebook_name,
+            document_name=quiz.scope.document_name,
+        ),
         adaptation=AdaptationResponse(
             adapted_using_learner_memory=quiz.adaptation.adapted,
             targeted_topic=(

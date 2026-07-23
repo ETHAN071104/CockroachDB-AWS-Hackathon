@@ -146,7 +146,9 @@ class CockroachDocumentVectorRepository:
                     """
                     SELECT c.*, d.public_id AS document_public_id,
                            c.embedding <=> CAST(:embedding AS VECTOR(384)) AS distance
-                    FROM document_chunks c JOIN documents d ON d.id=c.document_id
+                    FROM document_chunks c JOIN documents d
+                      ON d.id=c.document_id
+                     AND d.workspace_id=c.workspace_id
                     WHERE c.workspace_id=:workspace_id AND c.embedding IS NOT NULL
                     """ + scope_sql
                     + " ORDER BY distance ASC, d.public_id ASC, c.chunk_index ASC LIMIT :limit"
@@ -165,7 +167,9 @@ class CockroachDocumentVectorRepository:
                 text(
                     """
                     SELECT c.*, d.public_id AS document_public_id
-                    FROM document_chunks c JOIN documents d ON d.id=c.document_id
+                    FROM document_chunks c JOIN documents d
+                      ON d.id=c.document_id
+                     AND d.workspace_id=c.workspace_id
                     WHERE c.workspace_id=:workspace_id
                     """ + scope_sql
                     + " ORDER BY d.public_id ASC, c.chunk_index ASC"
@@ -277,7 +281,9 @@ class CockroachMemoryVectorRepository:
                     """
                     SELECT m.*, e.embedding <=> CAST(:embedding AS VECTOR(384)) AS distance
                     FROM learner_memory_embeddings e
-                    JOIN learner_memories m ON m.id=e.memory_id
+                    JOIN learner_memories m
+                      ON m.id=e.memory_id
+                     AND m.workspace_id=e.workspace_id
                     WHERE """ + " AND ".join(clauses)
                     + " ORDER BY distance ASC, m.public_id ASC LIMIT :limit"
                 ), parameters,

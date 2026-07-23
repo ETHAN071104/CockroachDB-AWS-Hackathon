@@ -206,8 +206,7 @@ def extract_json_object(raw_text: str) -> str:
 
     if start == -1 or end == -1 or end < start:
         raise RuntimeError(
-            "Conflict classifier did not return a JSON object.\n"
-            f"Raw output:\n{cleaned}"
+            "Conflict classifier did not return a JSON object."
         )
 
     return cleaned[start:end + 1]
@@ -258,8 +257,7 @@ def classify_candidate_against_existing(
 
     except Exception as error:
         raise RuntimeError(
-            "Conflict classifier returned invalid JSON.\n"
-            f"Raw output:\n{raw_text}"
+            "Conflict classifier returned invalid JSON."
         ) from error
 
 

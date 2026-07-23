@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Query
 
-from backend.api.errors import ApiError
+from backend.api.errors import ApiError, map_exception
 from backend.api.schemas import (
     SourceLineageResponse,
     SummaryContentResponse,
@@ -127,10 +127,10 @@ def _post_summary(kind: str, scope_id: int | str) -> SummaryResponse:
             message="Sources changed during generation. Previous cache was preserved.",
         ) from error
     except IntelligenceGenerationError as error:
-        raise ApiError(
-            status_code=502,
-            code="generation_failed",
-            message="Structured summary generation failed. Previous cache was preserved.",
+        raise map_exception(
+            error,
+            fallback_code="INTERNAL_ERROR",
+            context="structured_summary",
         ) from error
     except ValueError as error:
         raise ApiError(
@@ -211,10 +211,10 @@ def _post_topic_extraction(scope: RetrievalScope) -> TopicListResponse:
             message="Sources changed during extraction. Previous topics were preserved.",
         ) from error
     except IntelligenceGenerationError as error:
-        raise ApiError(
-            status_code=502,
-            code="generation_failed",
-            message="Structured topic extraction failed. Previous topics were preserved.",
+        raise map_exception(
+            error,
+            fallback_code="INTERNAL_ERROR",
+            context="topic_extraction",
         ) from error
     except ValueError as error:
         raise ApiError(

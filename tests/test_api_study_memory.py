@@ -613,7 +613,7 @@ class StudyMemoryApiTest(unittest.TestCase):
         self.stack.enter_context(patch("backend.api.errors.LOGGER.error"))
         self.client = self.stack.enter_context(
             TestClient(
-                app_module.create_app(),
+                app_module.create_app(allow_legacy_default_workspace=True),
                 raise_server_exceptions=False,
             )
         )
@@ -897,7 +897,7 @@ class DeterministicGetApiTest(unittest.TestCase):
             )
         self.client = self.stack.enter_context(
             TestClient(
-                app_module.create_app(),
+                app_module.create_app(allow_legacy_default_workspace=True),
                 raise_server_exceptions=False,
             )
         )
@@ -974,7 +974,7 @@ class ChatApiTest(unittest.TestCase):
             if self.answer_error is not None:
                 raise self.answer_error
             return (
-                f"Grounded answer for: {question}",
+                f"Grounded answer for: {question} [1]",
                 [self.source],
             )
 
@@ -1009,7 +1009,7 @@ class ChatApiTest(unittest.TestCase):
         self.stack.enter_context(patch("backend.api.errors.LOGGER.error"))
         self.client = self.stack.enter_context(
             TestClient(
-                app_module.create_app(),
+                app_module.create_app(allow_legacy_default_workspace=True),
                 raise_server_exceptions=False,
             )
         )
@@ -1036,7 +1036,14 @@ class ChatApiTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(self.last_scope.notebook_id, self.notebook.id)
         self.assertIsNone(self.last_scope.document_ids)
-        self.assertEqual(payload["answer"], "Grounded answer for: What do mitochondria do?")
+        self.assertEqual(
+            payload["answer"],
+            "Grounded answer for: What do mitochondria do? [1]",
+        )
+        self.assertEqual(payload["type"], "answer")
+        self.assertEqual(payload["intent"], "document_question")
+        self.assertEqual(payload["evidence_status"], "grounded")
+        self.assertIsNone(payload["redirect"])
         self.assertIsInstance(payload["session_id"], int)
         self.assertIsInstance(payload["interaction_id"], int)
         self.assertEqual(payload["memory_proposal"]["proposal_id"], self.pending_proposal.id)
@@ -1057,6 +1064,121 @@ class ChatApiTest(unittest.TestCase):
         self.assertEqual(source.excerpt, self.source.text)
         self.assertNotIn("file_hash", response.text)
         self.assertNotIn(str(self.database_path), response.text)
+
+    def test_chat_distinguishes_an_unindexed_scope_without_calling_rag(self) -> None:
+        rag_database.update_chunk_count(self.document_id, 0)
+        response = self.client.post(
+            "/api/chat",
+            json={
+                "question": "What does this lesson explain?",
+                "document_ids": [self.document_id],
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["type"], "answer")
+        self.assertEqual(payload["evidence_status"], "no_documents_indexed")
+        self.assertEqual(payload["sources"], [])
+        self.assertIn("No indexed study material", payload["answer"])
+        self.answer_mock.assert_not_called()
+
+    def test_performance_and_planning_questions_return_feature_redirects(self) -> None:
+        cases = (
+            (
+                "What are my weaknesses?",
+                "weakness_analysis",
+                "coaching",
+                "Open Coaching",
+            ),
+            (
+                "What should I learn first based on my mistakes?",
+                "coaching_request",
+                "coaching",
+                "Open Coaching",
+            ),
+            (
+                "Create a study plan based on my history.",
+                "study_plan_request",
+                "study-plan",
+                "Create Study Plan",
+            ),
+        )
+        for prompt, intent, target, action_label in cases:
+            with self.subTest(prompt=prompt):
+                self.answer_mock.reset_mock()
+                response = self.client.post("/api/chat", json={"question": prompt})
+                self.assertEqual(response.status_code, 200, response.text)
+                payload = response.json()
+                self.assertEqual(payload["type"], "feature_redirect")
+                self.assertEqual(payload["intent"], intent)
+                self.assertEqual(payload["redirect"]["target"], target)
+                self.assertEqual(payload["redirect"]["action_label"], action_label)
+                self.assertEqual(payload["redirect"]["original_prompt"], prompt)
+                self.assertEqual(payload["sources"], [])
+                self.assertIsNone(payload["memory_proposal"])
+                self.answer_mock.assert_not_called()
+
+    def test_redirect_preserves_prompt_as_data_and_ambiguous_text_stays_in_chat(self) -> None:
+        prompt = 'What are my weaknesses? <script>alert("x")</script> & notes'
+        redirected = self.client.post("/api/chat", json={"question": prompt})
+        self.assertEqual(redirected.status_code, 200, redirected.text)
+        self.assertEqual(
+            redirected.json()["redirect"]["original_prompt"],
+            prompt,
+        )
+        self.assertNotIn("<script>", redirected.json()["redirect"]["message"])
+
+        self.answer_mock.reset_mock()
+        ambiguous = self.client.post("/api/chat", json={"question": "Help me"})
+        self.assertEqual(ambiguous.status_code, 200, ambiguous.text)
+        self.assertEqual(ambiguous.json()["type"], "answer")
+        self.assertEqual(
+            ambiguous.json()["intent"],
+            "unsupported_or_ambiguous",
+        )
+        self.assertIsNone(ambiguous.json()["redirect"])
+        self.answer_mock.assert_called_once()
+
+    def test_study_plan_and_coaching_endpoints_remain_compatible(self) -> None:
+        for path in (
+            "/api/study/actions/plan",
+            "/api/study/actions/coaching-plan",
+        ):
+            with self.subTest(path=path):
+                response = self.client.post(
+                    path,
+                    json={"total_minutes": 45, "max_items": 4},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                if path == "/api/study/actions/plan":
+                    self.assertIn("items", response.json())
+                else:
+                    self.assertIn("plan", response.json())
+                    self.assertIn("items", response.json())
+
+    def test_coaching_provider_failure_uses_actionable_error_envelope(self) -> None:
+        class ProviderRateLimitError(RuntimeError):
+            status_code = 429
+
+        with patch(
+            "backend.api.routes.reports_study.generate_coaching_plan",
+            side_effect=ProviderRateLimitError("private provider payload"),
+        ):
+            response = self.client.post(
+                "/api/study/actions/coaching-plan",
+                json={"total_minutes": 45, "max_items": 4},
+            )
+
+        self.assertEqual(response.status_code, 429, response.text)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "AI_PROVIDER_RATE_LIMITED")
+        self.assertEqual(
+            payload["title"],
+            "AI provider rate limit reached",
+        )
+        self.assertTrue(payload["retryable"])
+        self.assertRegex(payload["request_id"], r"^[a-f0-9]{32}$")
+        self.assertNotIn("private provider payload", response.text)
 
     def test_answer_or_atomic_source_failure_writes_no_interaction(self) -> None:
         self.answer_error = RuntimeError("model unavailable")

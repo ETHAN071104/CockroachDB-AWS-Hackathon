@@ -12,6 +12,7 @@ from backend.api.export_service import (
     build_study_export,
     cleanup_export_artifact,
 )
+from backend.application.dependencies import get_application_dependencies
 
 
 LOGGER = logging.getLogger("study_companion.api")
@@ -21,7 +22,9 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 @router.get("/export", response_class=FileResponse)
 def export_study_data() -> FileResponse:
     try:
-        artifact = build_study_export()
+        artifact = build_study_export(
+            workspace_id=get_application_dependencies().workspace_id
+        )
     except ExportCreationError as error:
         LOGGER.warning(
             "Study data export failed error_type=%s",

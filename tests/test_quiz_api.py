@@ -80,7 +80,7 @@ class QuizApiTest(unittest.TestCase):
         self.stack.enter_context(patch("backend.api.errors.LOGGER.error"))
         self.client = self.stack.enter_context(
             TestClient(
-                app_module.create_app(),
+                app_module.create_app(allow_legacy_default_workspace=True),
                 raise_server_exceptions=False,
             )
         )
@@ -91,6 +91,14 @@ class QuizApiTest(unittest.TestCase):
         payload = response.json()
 
         self.assertEqual(len(payload["questions"]), 3)
+        self.assertEqual(payload["scope"]["type"], "document")
+        self.assertEqual(payload["scope"]["label"], "plants.pdf")
+        self.assertEqual(payload["scope"]["document_count"], 1)
+        self.assertEqual(
+            payload["scope"]["resolved_document_ids"],
+            [self.document_id],
+        )
+        self.assertFalse(payload["scope"]["personalized"])
         self.assertEqual(quiz_api.pending_quiz_count(), 1)
         self.assertNotIn("correct_option", response.text)
         self.assertNotIn("explanation", response.text)
@@ -101,6 +109,78 @@ class QuizApiTest(unittest.TestCase):
                 {"question_number", "question", "options"},
             )
         self.assertEqual(study_database.list_quiz_attempts(), [])
+
+    def test_global_scope_and_empty_explicit_scopes_are_unambiguous(self) -> None:
+        global_response = self.client.post(
+            "/api/study/actions/quizzes/generate",
+            json={"topic": "plant energy", "question_count": 1},
+        )
+        self.assertEqual(global_response.status_code, 200, global_response.text)
+        self.assertEqual(global_response.json()["scope"]["type"], "global")
+        self.assertEqual(
+            global_response.json()["scope"]["resolved_document_ids"],
+            [self.document_id],
+        )
+
+        empty_notebook = create_notebook("Empty quiz notebook")
+        empty_response = self.client.post(
+            "/api/study/actions/quizzes/generate",
+            json={
+                "topic": "plant energy",
+                "question_count": 1,
+                "notebook_id": empty_notebook.id,
+            },
+        )
+        self.assertEqual(empty_response.status_code, 422, empty_response.text)
+        self.assertEqual(
+            empty_response.json()["error"]["code"],
+            "SCOPE_EMPTY",
+        )
+        self.assertIn("has no indexed study material", empty_response.text)
+
+        malformed = self.client.post(
+            "/api/study/actions/quizzes/generate",
+            json={
+                "topic": "plant energy",
+                "question_count": 1,
+                "document_ids": [],
+            },
+        )
+        self.assertEqual(malformed.status_code, 422, malformed.text)
+
+    def test_empty_global_and_unindexed_document_return_specific_actions(self) -> None:
+        rag_database.delete_document_record(self.document_id)
+        empty_global = self.client.post(
+            "/api/study/actions/quizzes/generate",
+            json={"topic": "plant energy", "question_count": 1},
+        )
+        self.assertEqual(empty_global.status_code, 422, empty_global.text)
+        self.assertEqual(
+            empty_global.json()["error"]["code"],
+            "NO_INDEXED_DOCUMENTS",
+        )
+        self.assertIn("Upload and index", empty_global.text)
+
+        unindexed_document_id = rag_database.insert_document(
+            filename="waiting.pdf",
+            mime_type="application/pdf",
+            file_hash="waiting-document",
+            file_data=b"waiting",
+        )
+        unindexed = self.client.post(
+            "/api/study/actions/quizzes/generate",
+            json={
+                "topic": "plant energy",
+                "question_count": 1,
+                "document_ids": [unindexed_document_id],
+            },
+        )
+        self.assertEqual(unindexed.status_code, 422, unindexed.text)
+        self.assertEqual(
+            unindexed.json()["error"]["code"],
+            "DOCUMENT_NOT_READY",
+        )
+        self.assertIn("not indexed yet", unindexed.text)
 
     def test_submission_scores_trusted_prefix_skips_and_unpresented_suffix(
         self,

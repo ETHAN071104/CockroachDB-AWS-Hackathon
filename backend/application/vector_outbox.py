@@ -50,7 +50,10 @@ class VectorOutboxService:
         try:
             self._apply(processing)
         except Exception as error:
-            self.repository.mark_failed(job_id, f"{type(error).__name__}: {error}")
+            self.repository.mark_failed(
+                job_id,
+                f"{type(error).__name__}: vector synchronization failed",
+            )
             raise VectorSynchronizationError(
                 job_id,
                 "The relational change was saved, but vector synchronization failed.",

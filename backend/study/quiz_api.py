@@ -12,6 +12,11 @@ from backend.study.quiz_runner import QuizQuestionAttempt, QuizRunResult
 from backend.application.dependencies import get_application_dependencies
 from backend.rag.rag_service import RetrievedSource
 from backend.study.quiz_generator import GroundedQuiz
+from backend.study.quiz_scope import (
+    QuizScope,
+    quiz_evidence_failure_message,
+    resolve_quiz_scope,
+)
 from backend.application.learning_loop import (
     AdaptationContext,
     analyze_quiz_outcomes,
@@ -55,6 +60,7 @@ class PresentedQuiz:
     topic: str
     confidence: float
     questions: tuple[PresentedQuizQuestion, ...]
+    scope: QuizScope
     adaptation: AdaptationContext
     adaptation_event_id: str
 
@@ -126,6 +132,10 @@ def generate_quiz_for_api(
     scope: RetrievalScope | None = None,
 ) -> PresentedQuiz:
     adaptation = build_adaptation_context("quiz", topic)
+    quiz_scope = resolve_quiz_scope(
+        scope,
+        personalized=adaptation.adapted,
+    )
     generated = generate_grounded_quiz(
         topic,
         question_count,
@@ -133,7 +143,9 @@ def generate_quiz_for_api(
         adaptation_instructions=adaptation.prompt_instructions,
     )
     if not generated.quiz.should_generate:
-        raise QuizGenerationRejectedError(generated.quiz.reason)
+        raise QuizGenerationRejectedError(
+            quiz_evidence_failure_message(quiz_scope)
+        )
 
     quiz_id = str(uuid4())
     with _registry_lock:
@@ -169,6 +181,7 @@ def generate_quiz_for_api(
         topic=generated.quiz.topic,
         confidence=generated.quiz.confidence,
         questions=questions,
+        scope=quiz_scope,
         adaptation=adaptation,
         adaptation_event_id=adaptation_event.id,
     )

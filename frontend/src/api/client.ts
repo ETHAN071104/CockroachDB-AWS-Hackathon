@@ -36,17 +36,45 @@ interface InFlightEntry {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly title: string;
+  readonly reason: string;
+  readonly nextAction: string;
+  readonly retryable: boolean;
+  readonly requestId?: string;
   readonly details?: unknown;
+  readonly legacyCode?: string;
 
   constructor(
     message: string,
-    options: { status: number; code: string; details?: unknown },
+    options: {
+      status: number;
+      code: string;
+      title?: string;
+      reason?: string;
+      nextAction?: string;
+      retryable?: boolean;
+      requestId?: string;
+      details?: unknown;
+      legacyCode?: string;
+    },
   ) {
     super(message);
     this.name = 'ApiError';
     this.status = options.status;
     this.code = options.code;
+    this.title = options.title ?? message;
+    this.reason = options.reason ?? message;
+    this.nextAction = options.nextAction ?? (
+      options.status === 0
+        ? 'Check the backend connection and try again.'
+        : 'Review the request and try again.'
+    );
+    this.retryable = options.retryable ?? (
+      options.status === 0 || options.status >= 500
+    );
+    this.requestId = options.requestId;
     this.details = options.details;
+    this.legacyCode = options.legacyCode;
   }
 }
 
@@ -63,20 +91,25 @@ export function toApiError(error: unknown): ApiError {
     return error;
   }
   if (error instanceof Error) {
-    return new ApiError(error.message || 'Request failed.', {
+    return new ApiError('Agentbook could not be reached', {
       status: 0,
-      code: 'network_error',
+      code: 'NETWORK_ERROR',
+      reason: 'The browser could not complete the request to the Agentbook backend.',
+      nextAction: 'Confirm the backend is running, then try again.',
+      retryable: true,
     });
   }
-  return new ApiError('Request failed.', {
+  return new ApiError('Agentbook could not be reached', {
     status: 0,
-    code: 'network_error',
-    details: error,
+    code: 'NETWORK_ERROR',
+    reason: 'The browser could not complete the request to the Agentbook backend.',
+    nextAction: 'Confirm the backend is running, then try again.',
+    retryable: true,
   });
 }
 
 export function getErrorMessage(error: unknown): string {
-  return toApiError(error).message;
+  return toApiError(error).reason;
 }
 
 function normalizeBaseUrl(value: string | undefined): string {
@@ -86,6 +119,8 @@ function normalizeBaseUrl(value: string | undefined): string {
 export const API_BASE_URL = normalizeBaseUrl(
   import.meta.env.VITE_API_BASE_URL,
 );
+
+let guestToken: string | null = null;
 
 function requestUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) {
@@ -111,19 +146,101 @@ async function parseResponse<T>(response: Response): Promise<T> {
   }
 
   if (!response.ok) {
-    const structured = payload as Partial<ErrorResponse> | undefined;
+    const structured = payload as (
+      Partial<ErrorResponse> & {
+        detail?: unknown;
+        message?: unknown;
+      }
+    ) | undefined;
     const body = structured?.error;
+    const legacyDetail = legacyDetailMessage(structured?.detail);
+    const fallbackMessage = (
+      body?.message
+      || legacyDetail
+      || (typeof structured?.message === 'string' ? structured.message : '')
+      || response.statusText
+      || 'The request could not be completed.'
+    );
+    const title = body?.title || fallbackMessage;
+    const reason = body?.reason || fallbackMessage;
+    const requestId = safeRequestId(
+      body?.request_id || response.headers.get('X-Request-ID'),
+    );
     throw new ApiError(
-      body?.message || response.statusText || 'Request failed.',
+      fallbackMessage,
       {
         status: response.status,
         code: body?.code || `http_${response.status}`,
+        title,
+        reason,
+        nextAction: body?.next_action || legacyNextAction(response.status),
+        retryable: body?.retryable ?? legacyRetryable(response.status),
+        requestId,
         details: body?.details,
+        legacyCode: body?.legacy_code ?? undefined,
       },
     );
   }
 
   return payload as T;
+}
+
+function requestHeaders(
+  path: string,
+  method: string,
+  initial: HeadersInit = {},
+): Headers {
+  const headers = new Headers(initial);
+  const isAgentbookPath = !/^https?:\/\//i.test(path);
+  const isPublicBootstrap = (
+    method === 'POST'
+    && path.replace(/\/$/, '') === '/api/guest-session'
+  );
+  if (guestToken && isAgentbookPath && !isPublicBootstrap) {
+    headers.set('Authorization', `Bearer ${guestToken}`);
+  }
+  return headers;
+}
+
+export function setGuestSessionToken(token: string | null): void {
+  guestToken = token?.trim() || null;
+  apiClient.invalidate();
+}
+
+function legacyDetailMessage(value: unknown): string {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (
+    typeof value === 'object'
+    && value !== null
+    && 'message' in value
+    && typeof value.message === 'string'
+  ) {
+    return value.message.trim();
+  }
+  return '';
+}
+
+function legacyRetryable(status: number): boolean {
+  return status === 408
+    || status === 429
+    || status === 500
+    || status === 502
+    || status === 503
+    || status === 504;
+}
+
+function legacyNextAction(status: number): string {
+  if (status === 404) return 'Return to the previous screen and choose an available resource.';
+  if (status === 409) return 'Refresh the page and review the current state.';
+  if (status === 422) return 'Review the submitted values and try again.';
+  return legacyRetryable(status)
+    ? 'Try again shortly.'
+    : 'Use the request details when asking for support.';
+}
+
+function safeRequestId(value: string | null | undefined): string | undefined {
+  const cleaned = value?.trim() ?? '';
+  return /^[A-Za-z0-9_-]{8,80}$/.test(cleaned) ? cleaned : undefined;
 }
 
 async function execute<T>(
@@ -216,7 +333,7 @@ class ApiClient {
     };
     entry.promise = execute<T>(url, {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers: requestHeaders(path, 'GET', { Accept: 'application/json' }),
       signal: controller.signal,
     }).then((data) => {
       if (ttl > 0) {
@@ -263,7 +380,11 @@ class ApiClient {
   ): Promise<T> {
     return execute<T>(requestUrl(path), {
       method: 'DELETE',
-      headers: { Accept: 'application/json', ...options.headers },
+      headers: requestHeaders(
+        path,
+        'DELETE',
+        { Accept: 'application/json', ...options.headers },
+      ),
       signal: options.signal,
     });
   }
@@ -283,9 +404,26 @@ class ApiClient {
     return execute<T>(requestUrl(path), {
       method: 'POST',
       body: form,
-      headers: { Accept: 'application/json' },
+      headers: requestHeaders(path, 'POST', { Accept: 'application/json' }),
       signal: options.signal,
     });
+  }
+
+  async download(path: string, options: ApiCallOptions = {}): Promise<Blob> {
+    try {
+      const response = await fetch(requestUrl(path), {
+        method: 'GET',
+        headers: requestHeaders(path, 'GET', { Accept: 'application/zip' }),
+        signal: options.signal,
+      });
+      if (!response.ok) {
+        return await parseResponse<never>(response);
+      }
+      return await response.blob();
+    } catch (error) {
+      if (isAbortError(error) || error instanceof ApiError) throw error;
+      throw toApiError(error);
+    }
   }
 
   invalidate(): void;
@@ -314,11 +452,11 @@ class ApiClient {
   ): Promise<T> {
     return execute<T>(requestUrl(path), {
       method,
-      headers: {
-        Accept: 'application/json',
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        ...options.headers,
-      },
+      headers: requestHeaders(path, method, {
+          Accept: 'application/json',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...options.headers,
+        }),
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: options.signal,
     });

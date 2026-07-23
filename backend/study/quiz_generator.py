@@ -272,8 +272,7 @@ def extract_json_object(
 
     if start == -1 or end == -1 or end < start:
         raise RuntimeError(
-            "The quiz model did not return a JSON object.\n"
-            f"Raw output:\n{cleaned}"
+            "The quiz model did not return a JSON object."
         )
 
     return cleaned[start:end + 1]
@@ -475,8 +474,7 @@ def generate_grounded_quiz(
 
     except Exception as error:
         raise RuntimeError(
-            "The quiz model returned invalid JSON.\n"
-            f"Raw output:\n{raw_text}"
+            "The quiz model returned invalid JSON."
         ) from error
 
     validate_grounded_quiz(

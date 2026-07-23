@@ -2,8 +2,14 @@ export type JsonPrimitive = string | number | boolean | null;
 
 export interface ApiErrorBody {
   code: string;
-  message: string;
+  title: string;
+  reason: string;
+  next_action: string;
+  retryable: boolean;
+  request_id: string;
+  message?: string;
   details?: unknown;
+  legacy_code?: string | null;
 }
 
 export interface ErrorResponse {
@@ -18,6 +24,8 @@ export interface ServiceHealth {
 export interface HealthResponse {
   status: 'ok' | 'degraded';
   version: string;
+  persistence_backend?: 'sqlite' | 'cockroach';
+  guest_sessions_configured?: boolean;
   database: ServiceHealth;
   documents_vector_store: ServiceHealth;
   memory_vector_store: ServiceHealth;
@@ -179,12 +187,68 @@ export type ChatRequest = {
   question: string;
 } & OptionalRetrievalScope;
 
+export type ChatIntent =
+  | 'document_question'
+  | 'weakness_analysis'
+  | 'coaching_request'
+  | 'study_plan_request'
+  | 'unsupported_or_ambiguous';
+
+export type ChatEvidenceStatus =
+  | 'grounded'
+  | 'no_documents_indexed'
+  | 'no_relevant_chunks'
+  | 'retrieved_chunks_insufficient'
+  | 'personal_performance_request'
+  | 'planning_request'
+  | 'citation_validation_failed'
+  | 'unsupported_claims';
+
+export interface FeatureRedirect {
+  target: 'coaching' | 'study-plan';
+  title: string;
+  message: string;
+  action_label: string;
+  original_prompt: string;
+  suggested_prompt?: string | null;
+}
+
+export interface GuestWorkspace {
+  name: string;
+}
+
+export interface GuestSessionMetadata {
+  status: 'active' | 'revoked' | 'expired';
+  created_at: string;
+  last_seen_at: string | null;
+  expires_at: string | null;
+}
+
+export interface GuestSessionCreateResponse {
+  token: string;
+  session: GuestSessionMetadata;
+  workspace: GuestWorkspace;
+}
+
+export interface GuestSessionInspectResponse {
+  status: 'active' | 'revoked' | 'expired';
+  workspace: GuestWorkspace;
+  created_at: string;
+  last_seen_at: string | null;
+  expires_at: string | null;
+}
+
 export interface ChatResponse {
   session_id: number;
   interaction_id: number;
   answer: string;
   sources: SourceLineage[];
   memory_proposal: MemoryProposal | null;
+  type?: 'answer' | 'feature_redirect';
+  intent?: ChatIntent;
+  evidence_status?: ChatEvidenceStatus;
+  redirect?: FeatureRedirect | null;
+  suggested_question?: string | null;
 }
 
 export interface StudySession {
@@ -360,7 +424,31 @@ export interface PresentedQuiz {
   topic: string;
   confidence: number;
   questions: PresentedQuizQuestion[];
+  scope: QuizScopeInfo;
   adaptation?: AdaptationInfo | null;
+}
+
+export type QuizScopeType =
+  | 'global'
+  | 'notebook'
+  | 'document'
+  | 'documents'
+  | 'topic'
+  | 'adaptive-global'
+  | 'adaptive-notebook'
+  | 'adaptive-document'
+  | 'adaptive-documents'
+  | 'adaptive-topic';
+
+export interface QuizScopeInfo {
+  type: QuizScopeType;
+  label: string;
+  document_count: number;
+  personalized: boolean;
+  resolved_document_ids: number[];
+  description: string;
+  notebook_name?: string | null;
+  document_name?: string | null;
 }
 
 export interface QuizAnswer {

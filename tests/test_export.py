@@ -281,19 +281,23 @@ class StudyExportTest(unittest.TestCase):
                 response = client.get("/api/system/export")
 
         self.assertEqual(response.status_code, 500)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "EXPORT_FAILED")
+        self.assertEqual(payload["title"], "Study-data export failed")
         self.assertEqual(
-            response.json(),
-            {
-                "error": {
-                    "code": "export_failed",
-                    "message": "Study data export could not be created.",
-                }
-            },
+            payload["message"],
+            "Study data export could not be created.",
         )
+        self.assertTrue(payload["retryable"])
+        self.assertRegex(payload["request_id"], r"^[a-f0-9]{32}$")
         self.assertNotIn(private_detail, response.text)
 
     def test_application_factory_registers_export_and_keeps_integrity(self) -> None:
-        paths = set(create_app().openapi()["paths"])
+        paths = set(
+            create_app(
+                allow_legacy_default_workspace=True
+            ).openapi()["paths"]
+        )
         self.assertIn("/api/system/export", paths)
         self.assertIn("/api/system/integrity", paths)
 

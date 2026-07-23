@@ -7,6 +7,7 @@ from typing import Any, Protocol, TypeVar
 from backend.domain import (
     AdaptationEvent,
     BlobMetadata,
+    GuestSession,
     LearningSignal,
     VectorOutboxJob,
     WorkflowState,
@@ -391,3 +392,52 @@ class WorkspaceRepository(Protocol):
     def create(self, workspace_id: str, name: str) -> Workspace: ...
 
     def get(self, workspace_id: str) -> Workspace | None: ...
+
+
+class GuestSessionRepository(Protocol):
+    def create(
+        self,
+        *,
+        session_id: str,
+        workspace_id: str,
+        token_hash: str,
+        creation_key_hash: str,
+        created_at: str,
+        expires_at: str | None,
+        session_label: str | None,
+    ) -> GuestSession: ...
+
+    def resolve_by_token_hash(self, token_hash: str) -> GuestSession | None: ...
+
+    def find_by_creation_key_hash(
+        self,
+        creation_key_hash: str,
+    ) -> GuestSession | None: ...
+
+    def get(self, session_id: str) -> GuestSession | None: ...
+
+    def update_last_seen(
+        self,
+        session_id: str,
+        *,
+        seen_at: str,
+        update_before: str,
+    ) -> GuestSession: ...
+
+    def revoke(
+        self,
+        session_id: str,
+        *,
+        expected_version: int,
+        revoked_at: str,
+    ) -> GuestSession: ...
+
+    def expire(
+        self,
+        session_id: str,
+        *,
+        expected_version: int,
+        expired_at: str,
+    ) -> GuestSession: ...
+
+    def list_internal(self) -> list[GuestSession]: ...

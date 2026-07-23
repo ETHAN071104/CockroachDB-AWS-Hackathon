@@ -14,8 +14,14 @@ class ApiModel(BaseModel):
 
 class ErrorBody(ApiModel):
     code: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    next_action: str = Field(min_length=1)
+    retryable: bool
+    request_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     message: str = Field(min_length=1)
     details: Any | None = None
+    legacy_code: str | None = None
 
 
 class ErrorResponse(ApiModel):
@@ -34,6 +40,33 @@ class HealthResponse(ApiModel):
     documents_vector_store: ServiceHealth
     memory_vector_store: ServiceHealth
     llm_provider: str
+    persistence_backend: str | None = None
+    guest_sessions_configured: bool | None = None
+
+
+class GuestWorkspaceResponse(ApiModel):
+    name: str
+
+
+class GuestSessionMetadataResponse(ApiModel):
+    status: Literal["active", "revoked", "expired"]
+    created_at: str
+    last_seen_at: str | None = None
+    expires_at: str | None = None
+
+
+class GuestSessionCreateResponse(ApiModel):
+    token: str = Field(min_length=43, max_length=200)
+    session: GuestSessionMetadataResponse
+    workspace: GuestWorkspaceResponse
+
+
+class GuestSessionInspectResponse(ApiModel):
+    status: Literal["active", "revoked", "expired"]
+    workspace: GuestWorkspaceResponse
+    created_at: str
+    last_seen_at: str | None = None
+    expires_at: str | None = None
 
 
 class NotebookCreate(ApiModel):
@@ -182,7 +215,11 @@ class QuizGenerateRequest(ApiModel):
     question_count: int = Field(default=3, ge=1, le=10)
     scope: RetrievalScopeRequest | None = None
     notebook_id: int | None = Field(default=None, ge=1)
-    document_ids: list[int] | None = Field(default=None, max_length=100)
+    document_ids: list[int] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+    )
     topic_id: str | None = Field(default=None, min_length=1, max_length=64)
 
     @model_validator(mode="after")
@@ -212,6 +249,28 @@ class PresentedQuizQuestionResponse(ApiModel):
     question_number: int = Field(ge=1)
     question: str
     options: list[str] = Field(min_length=4, max_length=4)
+
+
+class QuizScopeResponse(ApiModel):
+    type: Literal[
+        "global",
+        "notebook",
+        "document",
+        "documents",
+        "topic",
+        "adaptive-global",
+        "adaptive-notebook",
+        "adaptive-document",
+        "adaptive-documents",
+        "adaptive-topic",
+    ]
+    label: str
+    document_count: int = Field(ge=1)
+    personalized: bool
+    resolved_document_ids: list[int] = Field(min_length=1)
+    description: str
+    notebook_name: str | None = None
+    document_name: str | None = None
 
 
 class AdaptationResponse(ApiModel):
@@ -263,6 +322,7 @@ class PresentedQuizResponse(ApiModel):
     topic: str
     confidence: float = Field(ge=0, le=1)
     questions: list[PresentedQuizQuestionResponse]
+    scope: QuizScopeResponse
     adaptation: AdaptationResponse | None = None
 
 
@@ -357,6 +417,15 @@ class StudySourceResponse(SourceLineageResponse):
     pass
 
 
+class FeatureRedirectResponse(ApiModel):
+    target: Literal["coaching", "study-plan"]
+    title: str
+    message: str
+    action_label: str
+    original_prompt: str
+    suggested_prompt: str | None = None
+
+
 class MemoryProposalResponse(ApiModel):
     proposal_id: str
     memory_type: MemoryType
@@ -384,6 +453,26 @@ class ChatResponse(ApiModel):
     answer: str
     sources: list[StudySourceResponse]
     memory_proposal: MemoryProposalResponse | None = None
+    type: Literal["answer", "feature_redirect"] = "answer"
+    intent: Literal[
+        "document_question",
+        "weakness_analysis",
+        "coaching_request",
+        "study_plan_request",
+        "unsupported_or_ambiguous",
+    ] = "document_question"
+    evidence_status: Literal[
+        "grounded",
+        "no_documents_indexed",
+        "no_relevant_chunks",
+        "retrieved_chunks_insufficient",
+        "personal_performance_request",
+        "planning_request",
+        "citation_validation_failed",
+        "unsupported_claims",
+    ] = "grounded"
+    redirect: FeatureRedirectResponse | None = None
+    suggested_question: str | None = None
 
 
 class InteractionOutcomeUpdate(ApiModel):

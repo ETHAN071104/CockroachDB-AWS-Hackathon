@@ -46,13 +46,15 @@ def verify() -> dict[str, object]:
     document_query = (
         "SELECT d.public_id,c.chunk_index,"
         "c.embedding <=> CAST(:embedding AS VECTOR(384)) AS distance "
-        "FROM document_chunks c JOIN documents d ON d.id=c.document_id "
+        "FROM document_chunks c JOIN documents d "
+        "ON d.id=c.document_id AND d.workspace_id=c.workspace_id "
         "WHERE c.workspace_id=:workspace_id ORDER BY distance,c.id LIMIT 5"
     )
     memory_query = (
         "SELECT m.public_id,"
         "e.embedding <=> CAST(:embedding AS VECTOR(384)) AS distance "
-        "FROM learner_memory_embeddings e JOIN learner_memories m ON m.id=e.memory_id "
+        "FROM learner_memory_embeddings e JOIN learner_memories m "
+        "ON m.id=e.memory_id AND m.workspace_id=e.workspace_id "
         "WHERE e.workspace_id=:workspace_id AND m.status='active' "
         "ORDER BY distance,m.public_id LIMIT 5"
     )
@@ -124,7 +126,7 @@ def verify() -> dict[str, object]:
         "credentials_recorded": False,
     }
     if (
-        revision != "0002_cockroach_vector_indexes"
+        revision != "0003_guest_sessions"
         or len(definitions) != 2
         or not document_rows
         or not memory_rows

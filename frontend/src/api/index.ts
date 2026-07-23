@@ -4,6 +4,7 @@ export {
   apiClient,
   getErrorMessage,
   isAbortError,
+  setGuestSessionToken,
   toApiError,
   withQuery,
 } from './client';
@@ -19,6 +20,7 @@ export {
   chatApi,
   dashboardApi,
   documentApi,
+  guestSessionApi,
   healthApi,
   intelligenceApi,
   memoryApi,

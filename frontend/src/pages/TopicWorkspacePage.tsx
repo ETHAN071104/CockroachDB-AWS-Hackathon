@@ -9,7 +9,9 @@ import {
   Button,
   Card,
   EmptyState,
+  ErrorNotice,
   ErrorState,
+  FeatureRedirectCard,
   LoadingState,
   Notice,
   OutcomeBadge,
@@ -65,7 +67,11 @@ export function TopicWorkspacePage() {
   );
 
   const summaryMissing =
-    summary.error instanceof ApiError && summary.error.code === 'summary_not_generated';
+    summary.error instanceof ApiError
+    && (
+      summary.error.code === 'SUMMARY_NOT_GENERATED'
+      || summary.error.legacyCode === 'summary_not_generated'
+    );
 
   async function handleSummary() {
     try {
@@ -159,7 +165,10 @@ export function TopicWorkspacePage() {
               />
             ) : null}
             {generateSummary.error ? (
-              <Notice tone="error">{errorMessage(generateSummary.error)}</Notice>
+              <ErrorNotice
+                error={generateSummary.error}
+                onRetry={() => generateSummary.retry()}
+              />
             ) : null}
             {summary.data ? (
               <Card className="reading-card">
@@ -209,7 +218,11 @@ export function TopicWorkspacePage() {
           </section>
 
           <section aria-labelledby="topic-question-title">
-            <SectionHeader headingId="topic-question-title" title="Ask about this topic" />
+            <SectionHeader
+              headingId="topic-question-title"
+              title="Ask about this topic"
+              description="Ask from this topic's uploaded source excerpts. For weakness analysis, use Coaching."
+            />
             <Card>
               <form className="composer" onSubmit={handleQuestion}>
                 <label htmlFor="topic-question">Question</label>
@@ -232,7 +245,12 @@ export function TopicWorkspacePage() {
                     Ask question
                   </Button>
                 </div>
-                {ask.error ? <Notice tone="error">{errorMessage(ask.error)}</Notice> : null}
+                {ask.error ? (
+                  <ErrorNotice
+                    error={ask.error}
+                    onRetry={() => ask.retry()}
+                  />
+                ) : null}
               </form>
             </Card>
           </section>
@@ -241,34 +259,55 @@ export function TopicWorkspacePage() {
             <section aria-labelledby="topic-answer-title">
               <SectionHeader
                 headingId="topic-answer-title"
-                title="Grounded answer"
-                actions={<OutcomeBadge outcome={outcome} />}
+                title={
+                  chatResult.type === 'feature_redirect'
+                    ? 'Suggested study tool'
+                    : 'Grounded answer'
+                }
+                actions={
+                  chatResult.type === 'feature_redirect'
+                    ? null
+                    : <OutcomeBadge outcome={outcome} />
+                }
               />
               <Card className="reading-card">
-                <p className="answer-copy">{chatResult.answer}</p>
-                <fieldset className="outcome-controls" disabled={rate.isPending}>
-                  <legend>How well did you understand this answer?</legend>
-                  {(['understood', 'partial', 'confused', 'unrated'] as StudyOutcome[]).map(
-                    (value) => (
-                      <button
-                        type="button"
-                        className={outcome === value ? 'is-selected' : ''}
-                        aria-pressed={outcome === value}
-                        key={value}
-                        onClick={() => void handleOutcome(value)}
-                      >
-                        <OutcomeBadge outcome={value} />
-                      </button>
-                    ),
-                  )}
-                </fieldset>
-                {rate.error ? <Notice tone="error">{errorMessage(rate.error)}</Notice> : null}
+                {chatResult.type === 'feature_redirect' && chatResult.redirect ? (
+                  <FeatureRedirectCard redirect={chatResult.redirect} />
+                ) : (
+                  <>
+                    <p className="answer-copy">{chatResult.answer}</p>
+                    {chatResult.suggested_question ? (
+                      <Notice tone="info" title="Try a document-grounded question">
+                        “{chatResult.suggested_question}”
+                      </Notice>
+                    ) : null}
+                    <fieldset className="outcome-controls" disabled={rate.isPending}>
+                      <legend>How well did you understand this answer?</legend>
+                      {(['understood', 'partial', 'confused', 'unrated'] as StudyOutcome[]).map(
+                        (value) => (
+                          <button
+                            type="button"
+                            className={outcome === value ? 'is-selected' : ''}
+                            aria-pressed={outcome === value}
+                            key={value}
+                            onClick={() => void handleOutcome(value)}
+                          >
+                            <OutcomeBadge outcome={value} />
+                          </button>
+                        ),
+                      )}
+                    </fieldset>
+                    {rate.error ? <Notice tone="error">{errorMessage(rate.error)}</Notice> : null}
+                  </>
+                )}
               </Card>
-              <div className="source-grid">
-                {chatResult.sources.map((source) => (
-                  <SourceCard key={`${source.index}-${source.document_id}`} source={source} />
-                ))}
-              </div>
+              {chatResult.type !== 'feature_redirect' ? (
+                <div className="source-grid">
+                  {chatResult.sources.map((source) => (
+                    <SourceCard key={`${source.index}-${source.document_id}`} source={source} />
+                  ))}
+                </div>
+              ) : null}
             </section>
           ) : null}
         </div>

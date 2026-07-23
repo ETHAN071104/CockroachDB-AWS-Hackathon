@@ -11,6 +11,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import backend.rag.database as rag_database
+import backend.rag.intelligence_store as intelligence_store
 import backend.study.database as study_database
 import backend.study.quiz_api as quiz_api
 from backend.rag.notebooks import assign_document_to_notebook, create_notebook
@@ -78,7 +79,7 @@ class ReportQuizAuditTest(unittest.TestCase):
         self.stack.enter_context(patch("backend.api.errors.LOGGER.error"))
         self.client = self.stack.enter_context(
             TestClient(
-                app_module.create_app(),
+                app_module.create_app(allow_legacy_default_workspace=True),
                 raise_server_exceptions=False,
             )
         )
@@ -158,7 +159,7 @@ class ReportQuizAuditTest(unittest.TestCase):
             params=[("document_ids", "999999")],
         )
         self.assertEqual(missing.status_code, 404, missing.text)
-        self.assertEqual(missing.json()["error"]["code"], "scope_not_found")
+        self.assertEqual(missing.json()["error"]["code"], "SCOPE_NOT_FOUND")
 
         notebook = create_notebook("Review Scope")
         conflicting = self.client.get(
@@ -169,7 +170,7 @@ class ReportQuizAuditTest(unittest.TestCase):
             ],
         )
         self.assertEqual(conflicting.status_code, 422, conflicting.text)
-        self.assertEqual(conflicting.json()["error"]["code"], "invalid_scope")
+        self.assertEqual(conflicting.json()["error"]["code"], "VALIDATION_ERROR")
 
     def test_aborted_attempt_redacts_unpresented_feedback_in_api_and_terminal(
         self,
@@ -291,6 +292,29 @@ class ReportQuizAuditTest(unittest.TestCase):
         notebook = create_notebook("Quiz Scope")
         assign_document_to_notebook(self.document_id, notebook.id)
         topic_id = "11111111-1111-4111-8111-111111111111"
+        intelligence_store.replace_topics_for_scope(
+            "documents",
+            [self.document_id],
+            [
+                intelligence_store.TopicInput(
+                    topic_id=topic_id,
+                    name="Scope audit topic",
+                    sources=(
+                        intelligence_store.TopicSourcePair(
+                            document_id=self.document_id,
+                            chunk_index=0,
+                            source_index=1,
+                            filename="audit-source.txt",
+                            mime_type="text/plain",
+                            excerpt="Audit source supports this question.",
+                        ),
+                    ),
+                ),
+            ],
+            fingerprint=intelligence_store.fingerprint_for_documents(
+                [self.document_id]
+            ),
+        )
         cases = (
             ("notebook_id", notebook.id, notebook.id, None, None),
             (

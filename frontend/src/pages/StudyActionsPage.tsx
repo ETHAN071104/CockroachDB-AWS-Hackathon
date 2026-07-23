@@ -22,6 +22,7 @@ import type {
   CoachingPlan,
   PresentedQuiz,
   QuizAnswer,
+  QuizScopeInfo,
   QuizSubmission,
   RetrievalScope,
   ReviewAction,
@@ -34,6 +35,7 @@ import {
   Button,
   Card,
   EmptyState,
+  ErrorNotice,
   ErrorState,
   LoadingState,
   Notice,
@@ -55,23 +57,136 @@ const ACTION_TABS: Array<{ id: ActionView; label: string }> = [
   { id: 'coaching', label: 'Coaching' },
 ];
 
+interface QuizScopeSelection {
+  scope?: RetrievalScope;
+  label: string;
+  preview: QuizScopePreview;
+  issue?: string;
+}
+
+type QuizScopePreview = Omit<
+  QuizScopeInfo,
+  'document_count' | 'resolved_document_ids'
+> & {
+  document_count?: number;
+  resolved_document_ids?: number[];
+};
+
+function parseQuizScope(searchParams: URLSearchParams): QuizScopeSelection {
+  const topicValues = searchParams.getAll('topic_id');
+  const notebookValues = searchParams.getAll('notebook_id');
+  const documentValues = searchParams.getAll('document_ids');
+  const selectedKinds = [topicValues, notebookValues, documentValues].filter(
+    (values) => values.length > 0,
+  ).length;
+  const requestedLabel =
+    searchParams.get('scope_name')?.trim() || searchParams.get('topic')?.trim() || '';
+
+  if (selectedKinds > 1) {
+    return invalidQuizScope(
+      'This link contains more than one quiz scope. Choose one document, notebook, topic, or global scope.',
+    );
+  }
+
+  if (topicValues.length) {
+    const topicId = topicValues[0]?.trim() ?? '';
+    if (topicValues.length !== 1 || !topicId) {
+      return invalidQuizScope('The selected topic scope is invalid. Choose the topic again.');
+    }
+    const label = requestedLabel || 'Selected topic';
+    return {
+      scope: { topic_id: topicId },
+      label,
+      preview: {
+        type: 'topic',
+        label,
+        personalized: false,
+        description: `Questions will use only the indexed source excerpts for “${label}”.`,
+      },
+    };
+  }
+
+  if (notebookValues.length) {
+    const rawNotebookId = notebookValues[0] ?? '';
+    if (notebookValues.length !== 1 || !/^[1-9]\d*$/.test(rawNotebookId)) {
+      return invalidQuizScope('The selected notebook scope is invalid. Choose the notebook again.');
+    }
+    const notebookId = Number(rawNotebookId);
+    const label = requestedLabel || 'Selected notebook';
+    return {
+      scope: { notebook_id: notebookId },
+      label,
+      preview: {
+        type: 'notebook',
+        label,
+        personalized: false,
+        notebook_name: requestedLabel || null,
+        description: `Questions will use indexed documents in the “${label}” notebook.`,
+      },
+    };
+  }
+
+  if (documentValues.length) {
+    const validValues = documentValues.every((value) => /^[1-9]\d*$/.test(value));
+    const documentIds = documentValues.map(Number);
+    if (!validValues || new Set(documentIds).size !== documentIds.length) {
+      return invalidQuizScope('The selected document scope is invalid. Choose the document again.');
+    }
+    const singleDocument = documentIds.length === 1;
+    const label = requestedLabel || (singleDocument ? 'Selected document' : 'Selected documents');
+    return {
+      scope: { document_ids: documentIds },
+      label,
+      preview: {
+        type: singleDocument ? 'document' : 'documents',
+        label,
+        document_count: documentIds.length,
+        personalized: false,
+        document_name: singleDocument && requestedLabel ? requestedLabel : null,
+        description: singleDocument
+          ? `Questions will use only the indexed document “${label}”.`
+          : `Questions will use only the ${documentIds.length} selected documents.`,
+      },
+    };
+  }
+
+  return {
+    label: '',
+    preview: {
+      type: 'global',
+      label: 'All indexed documents',
+      personalized: false,
+      description: 'Questions may use any of your indexed documents.',
+    },
+  };
+}
+
+function invalidQuizScope(issue: string): QuizScopeSelection {
+  return {
+    label: '',
+    issue,
+    preview: {
+      type: 'global',
+      label: 'Quiz scope unavailable',
+      personalized: false,
+      description: issue,
+    },
+  };
+}
+
 export function StudyActionsPage() {
   const [searchParams] = useSearchParams();
-  const scopedTopicId = searchParams.get('topic_id');
-  const scopedNotebookId = Number(searchParams.get('notebook_id'));
-  const scopedDocumentIds = searchParams
-    .getAll('document_ids')
-    .map(Number)
-    .filter((documentId) => Number.isInteger(documentId) && documentId > 0);
-  const scopeLabel = searchParams.get('scope_name') ?? searchParams.get('topic') ?? '';
-  const scope: RetrievalScope | undefined = scopedTopicId
-    ? { topic_id: scopedTopicId }
-    : Number.isInteger(scopedNotebookId) && scopedNotebookId > 0
-      ? { notebook_id: scopedNotebookId }
-      : scopedDocumentIds.length
-        ? { document_ids: [...new Set(scopedDocumentIds)] }
-        : undefined;
-  const [view, setView] = useState<ActionView>(scopedTopicId ? 'quiz' : 'review');
+  const scopeSelection = useMemo(() => parseQuizScope(searchParams), [searchParams]);
+  const { scope, label: scopeLabel, issue: scopeIssue, preview: scopePreview } =
+    scopeSelection;
+  const requestedView = searchParams.get('view');
+  const carriedPrompt = (searchParams.get('prompt') ?? '').trim().slice(0, 4000);
+  const initialView = ACTION_TABS.some((tab) => tab.id === requestedView)
+    ? requestedView as ActionView
+    : scope?.topic_id
+      ? 'quiz'
+      : 'review';
+  const [view, setView] = useState<ActionView>(initialView);
 
   function handleTabKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     const lastIndex = ACTION_TABS.length - 1;
@@ -101,7 +216,9 @@ export function StudyActionsPage() {
         eyebrow="Active study"
         title="Study actions"
         description={
-          scope
+          scopeIssue
+            ? scopeIssue
+            : scope
             ? `Work only from ${scopeLabel || 'the selected study scope'}.`
             : 'Turn stored outcomes and grounded sources into the next useful study step.'
         }
@@ -128,12 +245,30 @@ export function StudyActionsPage() {
       </div>
 
       <div role="tabpanel" id={`panel-${view}`} aria-labelledby={`tab-${view}`}>
-        {view === 'review' ? <ReviewWorkspace scope={scope} /> : null}
-        {view === 'quiz' ? (
-          <QuizWorkspace scope={scope} initialTopic={scopeLabel} />
-        ) : null}
-        {view === 'plan' ? <PlanWorkspace scope={scope} /> : null}
-        {view === 'coaching' ? <CoachingWorkspace scope={scope} /> : null}
+        {scopeIssue ? (
+          <EmptyState
+            title="Study scope needs attention"
+            description={scopeIssue}
+            action={<a className="text-link" href="/notebooks">Choose a study source</a>}
+          />
+        ) : (
+          <>
+            {view === 'review' ? <ReviewWorkspace scope={scope} /> : null}
+            {view === 'quiz' ? (
+              <QuizWorkspace
+                scope={scope}
+                initialTopic={scopeLabel}
+                scopePreview={scopePreview}
+              />
+            ) : null}
+            {view === 'plan' ? (
+              <PlanWorkspace scope={scope} carriedPrompt={carriedPrompt} />
+            ) : null}
+            {view === 'coaching' ? (
+              <CoachingWorkspace scope={scope} carriedPrompt={carriedPrompt} />
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   );
@@ -213,7 +348,12 @@ function ReviewWorkspace({ scope }: { scope?: RetrievalScope }) {
           description="Mark a chat answer partial or confused when it needs another pass."
         />
       ) : null}
-      {generate.error ? <Notice tone="error">{errorMessage(generate.error)}</Notice> : null}
+      {generate.error ? (
+        <ErrorNotice
+          error={generate.error}
+          onRetry={() => generate.retry()}
+        />
+      ) : null}
       {result ? (
         <Card tone="accent" className="reading-card">
           <Badge tone={result.should_generate ? 'success' : 'warning'}>
@@ -253,9 +393,11 @@ function ReviewWorkspace({ scope }: { scope?: RetrievalScope }) {
 function QuizWorkspace({
   scope,
   initialTopic,
+  scopePreview,
 }: {
   scope?: RetrievalScope;
   initialTopic: string;
+  scopePreview: QuizScopePreview;
 }) {
   const [topic, setTopic] = useState(initialTopic);
   const [questionCount, setQuestionCount] = useState(3);
@@ -380,6 +522,7 @@ function QuizWorkspace({
           title="Quiz result"
           actions={<Button variant="secondary" onClick={resetQuiz}>Start another quiz</Button>}
         />
+        <QuizScopeSummary scope={quiz?.scope ?? scopePreview} confirmed={Boolean(quiz?.scope)} />
         <div className="metric-grid">
           <Card>
             <p className="metric-label">Score</p>
@@ -524,6 +667,7 @@ function QuizWorkspace({
           description={`${answers.length} of ${quiz.questions.length} questions presented.`}
           actions={<Button variant="ghost" onClick={resetQuiz}>Cancel quiz</Button>}
         />
+        <QuizScopeSummary scope={quiz.scope ?? scopePreview} confirmed={Boolean(quiz.scope)} />
         {quiz.adaptation?.adapted_using_learner_memory ? (
           <Notice tone="info">
             Adapted using learner memory. Target: {quiz.adaptation.targeted_topic ?? quiz.topic}; difficulty: {quiz.adaptation.difficulty ?? 'standard'}. {quiz.adaptation.reason}
@@ -572,7 +716,12 @@ function QuizWorkspace({
             </Button>
           </Card>
         ) : null}
-        {submit.error ? <Notice tone="error">{errorMessage(submit.error)}</Notice> : null}
+        {submit.error ? (
+          <ErrorNotice
+            error={submit.error}
+            onRetry={() => submit.retry()}
+          />
+        ) : null}
       </div>
     );
   }
@@ -583,6 +732,7 @@ function QuizWorkspace({
         title="Grounded quiz"
         description="Correct options and explanations stay on the server until you submit."
       />
+      <QuizScopeSummary scope={scopePreview} pending={generate.isPending} />
       <Card>
         <form className="form-stack" onSubmit={handleGenerate}>
           <label>
@@ -608,7 +758,17 @@ function QuizWorkspace({
               ))}
             </select>
           </label>
-          {generate.error ? <Notice tone="error">{errorMessage(generate.error)}</Notice> : null}
+          {generate.error ? (
+            <ErrorNotice
+              error={generate.error}
+              onRetry={() => generate.retry()}
+              alternateAction={
+                <a className="text-link" href="/notebooks">
+                  Choose or upload study material
+                </a>
+              }
+            />
+          ) : null}
           <Button
             type="submit"
             icon={<BrainCircuit size={18} aria-hidden="true" />}
@@ -623,7 +783,71 @@ function QuizWorkspace({
   );
 }
 
-function PlanWorkspace({ scope }: { scope?: RetrievalScope }) {
+function QuizScopeSummary({
+  scope,
+  pending = false,
+  confirmed = false,
+}: {
+  scope: QuizScopePreview;
+  pending?: boolean;
+  confirmed?: boolean;
+}) {
+  const baseType = scope.type.replace('adaptive-', '');
+  const typeLabel: Record<string, string> = {
+    global: 'Global',
+    notebook: 'Notebook',
+    document: 'Document',
+    documents: 'Documents',
+    topic: 'Topic',
+  };
+  const documentCount = scope.document_count;
+
+  return (
+    <Card padding="small" tone="muted" className="quiz-scope-card">
+      <div className="quiz-scope-card__header">
+        <div>
+          <p className="eyebrow">Quiz source</p>
+          <h3>{scope.label}</h3>
+        </div>
+        <div className="summary-badges">
+          <Badge tone="primary">{typeLabel[baseType] ?? 'Scoped'}</Badge>
+          {pending ? <Badge tone="info">Resolving sources</Badge> : null}
+          {!pending && confirmed && scope.personalized ? (
+            <Badge tone="info">Adaptive quiz</Badge>
+          ) : null}
+          {!pending && confirmed && !scope.personalized ? (
+            <Badge tone="neutral">Standard quiz</Badge>
+          ) : null}
+        </div>
+      </div>
+      <p>{scope.description}</p>
+      <dl className="quiz-scope-card__facts">
+        <div>
+          <dt>Included documents</dt>
+          <dd>{documentCount ?? (pending ? 'Resolving…' : 'Confirmed when generated')}</dd>
+        </div>
+        <div>
+          <dt>Personalization</dt>
+          <dd>
+            {scope.personalized
+              ? 'Relevant learner history applied'
+              : confirmed
+                ? 'No relevant learner history applied'
+                : 'Applied only when relevant history exists'}
+          </dd>
+        </div>
+      </dl>
+    </Card>
+  );
+}
+
+function PlanWorkspace({
+  scope,
+  carriedPrompt,
+}: {
+  scope?: RetrievalScope;
+  carriedPrompt: string;
+}) {
   const [minutes, setMinutes] = useState(45);
   const [maxItems, setMaxItems] = useState(5);
   const [plan, setPlan] = useState<StudyPlan | null>(null);
@@ -648,7 +872,11 @@ function PlanWorkspace({ scope }: { scope?: RetrievalScope }) {
 
   return (
     <div className="page-stack">
-      <SectionHeader title="Adaptive study plan" description="A deterministic plan built from stored outcomes and quiz gaps." />
+      <SectionHeader
+        title="Adaptive study plan"
+        description="Organizes what to learn next, in what order, and how much time to spend."
+      />
+      {carriedPrompt ? <CarriedPromptNotice prompt={carriedPrompt} /> : null}
       <Card>
         <PlanForm
           minutes={minutes}
@@ -659,6 +887,7 @@ function PlanWorkspace({ scope }: { scope?: RetrievalScope }) {
           pending={build.isPending}
           submitLabel="Build study plan"
           error={build.error}
+          onRetry={() => build.retry()}
         />
       </Card>
       {plan ? <PlanResult plan={plan} /> : null}
@@ -666,7 +895,13 @@ function PlanWorkspace({ scope }: { scope?: RetrievalScope }) {
   );
 }
 
-function CoachingWorkspace({ scope }: { scope?: RetrievalScope }) {
+function CoachingWorkspace({
+  scope,
+  carriedPrompt,
+}: {
+  scope?: RetrievalScope;
+  carriedPrompt: string;
+}) {
   const [minutes, setMinutes] = useState(45);
   const [maxItems, setMaxItems] = useState(4);
   const [coaching, setCoaching] = useState<CoachingPlan | null>(null);
@@ -695,7 +930,11 @@ function CoachingWorkspace({ scope }: { scope?: RetrievalScope }) {
 
   return (
     <div className="page-stack">
-      <SectionHeader title="Grounded coaching" description="First builds the deterministic plan, then generates cited practice only when plan items exist." />
+      <SectionHeader
+        title="Grounded coaching"
+        description="Uses your quiz mistakes, Learning Signals, and Learner Memories to decide what you should review."
+      />
+      {carriedPrompt ? <CarriedPromptNotice prompt={carriedPrompt} /> : null}
       <Card>
         <PlanForm
           minutes={minutes}
@@ -706,6 +945,7 @@ function CoachingWorkspace({ scope }: { scope?: RetrievalScope }) {
           pending={build.isPending}
           submitLabel="Generate coaching plan"
           error={build.error}
+          onRetry={() => build.retry()}
         />
       </Card>
       {coaching ? (
@@ -753,6 +993,14 @@ function CoachingWorkspace({ scope }: { scope?: RetrievalScope }) {
   );
 }
 
+function CarriedPromptNotice({ prompt }: { prompt: string }) {
+  return (
+    <Notice tone="info" title="Question brought from Study Chat">
+      {prompt}
+    </Notice>
+  );
+}
+
 interface PlanFormProps {
   minutes: number;
   maxItems: number;
@@ -762,6 +1010,7 @@ interface PlanFormProps {
   pending: boolean;
   submitLabel: string;
   error: unknown;
+  onRetry: () => Promise<StudyPlan | CoachingPlan> | undefined;
 }
 
 function PlanForm({
@@ -773,6 +1022,7 @@ function PlanForm({
   pending,
   submitLabel,
   error,
+  onRetry,
 }: PlanFormProps) {
   return (
     <form className="form-stack" onSubmit={onSubmit}>
@@ -798,7 +1048,7 @@ function PlanForm({
           />
         </label>
       </div>
-      {error ? <Notice tone="error">{errorMessage(error)}</Notice> : null}
+      {error ? <ErrorNotice error={error} onRetry={onRetry} /> : null}
       <Button type="submit" loading={pending} loadingText="Building plan…">
         {submitLabel}
       </Button>

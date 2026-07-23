@@ -239,8 +239,7 @@ def extract_json_object(
 
     if start == -1 or end == -1 or end < start:
         raise RuntimeError(
-            "The consolidation model did not return a JSON "
-            f"object.\nRaw output:\n{cleaned}"
+            "The consolidation model did not return a JSON object."
         )
 
     return cleaned[start:end + 1]
@@ -458,8 +457,7 @@ def propose_memory_consolidation(
 
     except Exception as error:
         raise RuntimeError(
-            "The consolidation model returned invalid JSON.\n"
-            f"Raw output:\n{raw_text}"
+            "The consolidation model returned invalid JSON."
         ) from error
 
     validate_consolidation_candidate(

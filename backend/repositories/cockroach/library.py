@@ -358,8 +358,14 @@ class CockroachNotebookRepository:
             return False
         with connection_scope() as connection:
             count = connection.execute(
-                text("SELECT count(*) FROM notebook_documents WHERE notebook_id=:id"),
-                {"id": notebook_uuid},
+                text(
+                    "SELECT count(*) FROM notebook_documents "
+                    "WHERE notebook_id=:id AND workspace_id=:workspace_id"
+                ),
+                {
+                    "id": notebook_uuid,
+                    "workspace_id": UUID(self.workspace_id),
+                },
             ).scalar_one()
             if int(count):
                 raise NotebookNotEmptyError(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 
 from backend.domain import DEFAULT_WORKSPACE_ID
@@ -14,6 +15,7 @@ from backend.repositories.interfaces import (
     DashboardRepository,
     DocumentRepository,
     DocumentVectorRepository,
+    GuestSessionRepository,
     IntelligenceRepository,
     LearnerMemoryRepository,
     LearningSignalRepository,
@@ -29,6 +31,7 @@ from backend.repositories.interfaces import (
 from backend.repositories.sqlite import (
     SQLiteAdaptationEventRepository,
     SQLiteDocumentRepository,
+    SQLiteGuestSessionRepository,
     SQLiteIntelligenceRepository,
     SQLiteLearnerMemoryRepository,
     SQLiteLearningSignalRepository,
@@ -49,6 +52,7 @@ from backend.repositories.sqlite.dashboard import SQLiteDashboardRepository
 class ApplicationDependencies:
     workspace_id: str
     workspaces: WorkspaceRepository
+    guest_sessions: GuestSessionRepository
     notebooks: NotebookRepository
     documents: DocumentRepository
     blobs: BlobStorage
@@ -92,6 +96,7 @@ def build_application_dependencies(
     return ApplicationDependencies(
         workspace_id=workspace_id,
         workspaces=SQLiteWorkspaceRepository(),
+        guest_sessions=SQLiteGuestSessionRepository(),
         notebooks=SQLiteNotebookRepository(workspace_id),
         documents=SQLiteDocumentRepository(workspace_id),
         blobs=SQLiteBlobStorage(workspace_id),
@@ -121,6 +126,7 @@ def _build_cockroach_dependencies(workspace_id: str) -> ApplicationDependencies:
         CockroachDashboardRepository,
         CockroachDocumentRepository,
         CockroachDocumentVectorRepository,
+        CockroachGuestSessionRepository,
         CockroachIntelligenceRepository,
         CockroachLearnerMemoryRepository,
         CockroachLearningSignalRepository,
@@ -137,6 +143,7 @@ def _build_cockroach_dependencies(workspace_id: str) -> ApplicationDependencies:
     return ApplicationDependencies(
         workspace_id=workspace_id,
         workspaces=CockroachWorkspaceRepository(),
+        guest_sessions=CockroachGuestSessionRepository(),
         notebooks=CockroachNotebookRepository(workspace_id),
         documents=CockroachDocumentRepository(workspace_id),
         blobs=CockroachBlobStorage(workspace_id),
@@ -156,13 +163,33 @@ def _build_cockroach_dependencies(workspace_id: str) -> ApplicationDependencies:
 
 
 _DEFAULT_DEPENDENCIES: ApplicationDependencies | None = None
+_REQUEST_DEPENDENCIES: ContextVar[ApplicationDependencies | None] = ContextVar(
+    "agentbook_request_dependencies",
+    default=None,
+)
 
 
 def get_application_dependencies() -> ApplicationDependencies:
+    request_dependencies = _REQUEST_DEPENDENCIES.get()
+    if request_dependencies is not None:
+        return request_dependencies
     global _DEFAULT_DEPENDENCIES
     if _DEFAULT_DEPENDENCIES is None:
         _DEFAULT_DEPENDENCIES = build_application_dependencies()
     return _DEFAULT_DEPENDENCIES
+
+
+def bind_application_dependencies(
+    dependencies: ApplicationDependencies,
+) -> Token[ApplicationDependencies | None]:
+    """Bind one authenticated workspace bundle for the current request."""
+    return _REQUEST_DEPENDENCIES.set(dependencies)
+
+
+def reset_application_dependencies(
+    token: Token[ApplicationDependencies | None],
+) -> None:
+    _REQUEST_DEPENDENCIES.reset(token)
 
 
 def configure_application_dependencies(

@@ -1,10 +1,14 @@
 # CockroachDB Backend Handoff
 
-Date: 2026-07-22
+Date: 2026-07-23
 
-Current state: PASS. The live schema and data are at revision `0002_cockroach_vector_indexes`; the runtime quiz citation defect is fixed, the two authorized preserved rows are repaired, and final verification is complete.
+Current state: PASS. The live schema is at revision
+`0003_guest_sessions`; Guest Workspace request isolation and the earlier
+CockroachDB migration, vector indexes, citation repair, and Agentic Learning
+Loop are verified.
 
-The repository-root `.env` intentionally remains on `PERSISTENCE_BACKEND=sqlite`. A permanent CockroachDB cutover requires separate authorization.
+The repository-root `.env` selects `PERSISTENCE_BACKEND=cockroach`. No SQLite
+or Chroma adapter participates in the public Cockroach runtime.
 
 ## Completed work
 
@@ -19,34 +23,59 @@ The repository-root `.env` intentionally remains on `PERSISTENCE_BACKEND=sqlite`
 - Exactly two authorized runtime citations were repaired in one guarded transaction; no other row changed.
 - A fresh live citation stored the correct chunk UUID immediately and remained correct after restart.
 - All 9 current quiz citations have valid lineage; the six imported citations remain unchanged.
+- The additive `0003_guest_sessions` revision created only the reviewed table,
+  constraints, and two guest-session indexes.
+- Guest credentials are 256-bit opaque values; CockroachDB stores only
+  domain-separated HMAC-SHA256 digests.
+- All user-data routers require a valid bearer session in public mode and bind
+  a request-scoped repository bundle to the server-derived workspace.
+- A live two-guest proof passed relational isolation, document-vector
+  isolation, learner-memory-vector isolation, guessed-ID denial, workspace
+  tampering denial, missing-credential denial, and repository/engine restart.
 - The SQLite/Chroma fingerprint remains `401b389c323c1fd8358940aef6af1ef22821617a0728359a13ed21c95d8f8f43` with 85 source objects and zero validation exceptions.
 
 ## Final live state
 
-The live destination contains 128 application records: the verified 85-object migration baseline plus 43 authorized runtime-test records. The final lineage mismatch count, referential orphan count, workspace orphan count, migration-item mismatch count, and imported-vector mismatch count are all zero.
+The legacy/default workspace baseline remains unchanged with fingerprint
+`fc41c2aef689c80f4e346a35733b38b29d817db7abe3c44983c10f69716eba56`.
+Its expected workspace-filtered counts were rechecked before and after the live
+guest proof. Guest proof rows exist only in two newly created private
+workspaces.
 
 The final regression added 13 durable records: one quiz attempt, question, citation, signal, memory, memory embedding, and embedding job; four workflow states; and two adaptation events. The TXT upload was not repeated because the fresh quiz regression directly verified the repaired runtime path.
 
 ## Verification commands
 
-These final checks passed:
+The original one-time migration previously passed its source-coupled verifier.
+Phase 5 passed:
 
 ```powershell
-python -m backend.infrastructure.cockroach.verify
-python -m backend.infrastructure.cockroach.compare
 python -m backend.infrastructure.cockroach.vector_index_verify
+python -m backend.infrastructure.cockroach.guest_session_verify
 python -m compileall -q backend alembic api main.py tests
 python -m unittest discover -s tests
+python -m unittest tests.test_live_cockroach_guest_isolation
 npm test
 npm run build
 git diff --check
 ```
 
-Results: backend 91 passed with 5 conditional skips; live repository/lineage 8 passed; controlled live Agentic Learning Loop 1 passed; frontend 7 files and 19 tests passed; production build passed.
+Current results: backend 120 tests pass with 6 conditional live tests skipped in
+the ordinary SQLite run; the opt-in live Guest Workspace proof passes;
+frontend 10 files and 32 tests pass; the production build passes.
+
+The old `backend.infrastructure.cockroach.verify` command now stops safely
+because the current local SQLite/Chroma snapshot has changed since its recorded
+one-time migration run. Phase 5 did not rerun that migration or rewrite its
+manifest. The live legacy workspace counts and Phase 5 schema/vector checks are
+independently unchanged and passing.
 
 ## Runtime selection
 
-For a separately authorized temporary Cockroach runtime check, set `PERSISTENCE_BACKEND=cockroach` in the process environment only. Cockroach mode fails startup instead of falling back to SQLite or Chroma. Do not edit the repository-root `.env` for permanent cutover without authorization.
+Cockroach mode fails startup instead of falling back to SQLite or Chroma.
+Public startup additionally requires `GUEST_SESSION_TOKEN_PEPPER` with at least
+32 bytes and keeps `ALLOW_LEGACY_DEFAULT_WORKSPACE=false`. The frontend sends
+the guest credential only to Agentbook API paths.
 
 ## Vector-index note
 
@@ -61,6 +90,10 @@ Live `EXPLAIN` used ordinary scans because the final tables contain only 23 docu
 
 - No credential is present in the reports or tracked changes.
 - SQLite and Chroma remain unchanged rollback sources.
-- The repair created, altered, or deleted no permanent table or index and reran no migration.
+- Revision `0003_guest_sessions` was the only permanent schema change in this
+  phase. No existing application row, legacy workspace, or vector index was
+  altered or deleted.
+- No raw guest token, stored digest, database credential, or private source
+  content is recorded in reports.
 - AWS, S3, deployment, authentication, notifications, and frontend redesign remain out of scope.
 - The CockroachDB `BYTES` blob adapter remains a compatibility implementation under the existing upload limit.

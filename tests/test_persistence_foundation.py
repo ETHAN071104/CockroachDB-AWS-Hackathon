@@ -247,6 +247,7 @@ class PersistenceFoundationTest(unittest.TestCase):
             "quiz-source",
             b"source",
         )
+        rag_database.update_chunk_count(document_id, 1)
         generated = _generated_quiz(document_id)
         with patch.object(quiz_api, "generate_grounded_quiz", return_value=generated):
             presented = quiz_api.generate_quiz_for_api("topic", 1)

@@ -15,11 +15,13 @@ Persistence is selectable. `PERSISTENCE_BACKEND=sqlite` keeps the legacy local S
 - Learner-memory CRUD, proposal decisions, and two-step consolidation.
 - Safe local export of SQLite and both Chroma stores with a checksum manifest.
 - Responsive, keyboard-accessible React UI with restrained GSAP route motion.
+- Anonymous Guest Workspaces with opaque bearer credentials, server-derived
+  ownership, request-scoped repositories, and relational/vector isolation.
 
 ## Architecture
 
 ```text
-React/Vite browser --HTTP /api--> backend/api/
+React/Vite browser --Bearer /api--> backend/api/guest_auth.py
                                          |
 Root launch shims -----------------------+
   main.py, api/app.py                     v
@@ -36,6 +38,7 @@ Root launch shims -----------------------+
 | `main.py` | Backward-compatible terminal launcher; implementation lives in `backend/cli.py`. |
 | `api/` | Backward-compatible shim preserving `uvicorn api.app:app`. |
 | `backend/api/` | App factory, schemas, error mapping, route composition, dashboard, and export delivery. Routes remain thin and call synchronous domain services. |
+| `backend/application/guest_sessions.py` | Creates and verifies opaque guest credentials using HMAC-SHA256 and binds each session to one private workspace. |
 | `backend/rag/` | Ingestion, notebook/document metadata, retrieval scopes, chat, citations, cached summaries, and topics. |
 | `backend/memory/` | Learner-memory persistence, vector search, proposals, and consolidation. |
 | `backend/study/` | Sessions, outcomes, quiz scoring, review, plans, coaching, reports, dashboard aggregation, and integrity checks. |
@@ -144,6 +147,13 @@ CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 RETRIEVAL_K=5
 
+# Guest Workspace security (required when legacy access is disabled)
+GUEST_SESSION_TOKEN_PEPPER=replace-with-at-least-32-random-bytes
+ALLOW_LEGACY_DEFAULT_WORKSPACE=false
+GUEST_SESSION_LAST_SEEN_MINUTES=5
+# Optional expiry; empty means no automatic expiry
+GUEST_SESSION_TTL_DAYS=
+
 # Learner memory
 MEMORY_RETRIEVAL_K=5
 MAX_MEMORY_DISTANCE=1.15
@@ -173,6 +183,12 @@ Configuration variables and defaults:
 | `EMBEDDING_MODEL` | No | `sentence-transformers/all-MiniLM-L6-v2` | Hugging Face embedding model. |
 | `EMBEDDING_DIMENSION` | No | `384` | Must match both the model and `VECTOR(384)` schema. |
 | `ENABLE_VECTOR_INDEX` | No | `true` | Enables the documented distributed vector-index rollout. |
+| `GUEST_SESSION_TOKEN_PEPPER` | Public Guest mode | None | Private HMAC pepper of at least 32 bytes. Changing it invalidates existing browser credentials. Never commit or log it. |
+| `GUEST_SESSION_TTL_DAYS` | No | None | Optional guest-session lifetime from 1 to 3650 days. Empty means no automatic expiry. |
+| `GUEST_SESSION_LAST_SEEN_MINUTES` | No | `5` | Minimum interval between durable last-seen updates. |
+| `GUEST_SESSION_CREATION_LIMIT_PER_MINUTE` | No | `30` | Per-process anonymous workspace creation limit; add an upstream distributed limiter for multiple API instances. |
+| `ALLOW_LEGACY_DEFAULT_WORKSPACE` | No | `false` | Explicit local compatibility switch. Never enable it for a public demo. |
+| `FRONTEND_ORIGIN` | Deployment only | None | Additional trusted frontend origin added to CORS. |
 | `CHUNK_SIZE` | No | `1000` | Character-oriented document chunk size. |
 | `CHUNK_OVERLAP` | No | `200` | Chunk overlap. |
 | `RETRIEVAL_K` | No | `5` | Maximum document chunks used for ordinary retrieval. |
@@ -204,7 +220,10 @@ python -m backend.infrastructure.cockroach.migration_runner upgrade 0001_agentbo
 python -m backend.infrastructure.cockroach.migrate
 
 # Add workspace-prefixed cosine vector indexes after vectors have been verified
-python -m backend.infrastructure.cockroach.migration_runner upgrade head
+python -m backend.infrastructure.cockroach.migration_runner upgrade 0002_cockroach_vector_indexes
+
+# Add the reviewed Guest Workspace session table
+python -m backend.infrastructure.cockroach.migration_runner upgrade 0003_guest_sessions
 
 # Compare source/destination counts, relationships, dimensions, revision, and indexes
 python -m backend.infrastructure.cockroach.verify
@@ -265,6 +284,12 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. Vite proxies `/api` to `http://127.0.0.1:8000`. The development CORS allowlist contains only the loopback Vite origins.
 
+On first visit, choose **Continue as Guest**. The browser keeps an opaque
+session credential in `localStorage`; the backend stores only its HMAC digest
+and derives the authoritative workspace server-side. Clearing site data loses
+the browser's access to that workspace. **Start a new study space** switches to
+a fresh workspace without deleting the old one.
+
 For a production frontend artifact:
 
 ```powershell
@@ -282,8 +307,12 @@ The API is synchronous by design because the existing domain workflows are synch
 {
   "error": {
     "code": "stable_machine_code",
-    "message": "Safe user-facing message",
-    "details": {}
+    "title": "Safe title",
+    "reason": "Safe user-facing reason",
+    "next_action": "Safe recovery action",
+    "retryable": false,
+    "request_id": "safe-request-id",
+    "details": null
   }
 }
 ```
@@ -294,7 +323,9 @@ Major route groups:
 
 | Route family | Purpose |
 | --- | --- |
-| `/api/health`, `/api/dashboard` | Storage health and deterministic dashboard data. |
+| `/api/health` | Public storage health without private workspace data. |
+| `/api/guest-session` | Create or inspect the current anonymous private workspace. |
+| `/api/dashboard` | Authenticated, workspace-scoped deterministic dashboard data. |
 | `/api/notebooks`, `/api/documents` | Notebook CRUD, uploads, assignment, search, counts, metadata edits, and deletion. |
 | `/api/documents/{id}/summary`, `/api/notebooks/{id}/summary` | Cached summary reads and explicit generation. |
 | `/api/topics`, `/api/topics/extract`, `/api/topics/{id}` | Cached topic listing/detail and explicit extraction. |

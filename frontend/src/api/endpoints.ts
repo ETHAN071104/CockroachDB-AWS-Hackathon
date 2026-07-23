@@ -58,6 +58,29 @@ export const healthApi = {
   },
 };
 
+export const guestSessionApi = {
+  create(
+    idempotencyKey: string,
+    options?: ApiCallOptions,
+  ): Promise<T.GuestSessionCreateResponse> {
+    return apiClient.post(
+      '/api/guest-session',
+      undefined,
+      {
+        ...options,
+        headers: { 'Idempotency-Key': idempotencyKey },
+      },
+    );
+  },
+  inspect(options?: GetOptions): Promise<T.GuestSessionInspectResponse> {
+    return apiClient.get('/api/guest-session', {
+      ...options,
+      forceRefresh: true,
+      cacheTtlMs: 0,
+    });
+  },
+};
+
 export const dashboardApi = {
   get(recentLimit = 5, options?: GetOptions): Promise<T.Dashboard> {
     return apiClient.get(
@@ -466,6 +489,7 @@ export const systemApi = {
 
 export const api = {
   health: healthApi,
+  guestSession: guestSessionApi,
   dashboard: dashboardApi,
   notebooks: notebookApi,
   documents: documentApi,

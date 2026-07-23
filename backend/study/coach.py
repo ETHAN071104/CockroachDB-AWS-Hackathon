@@ -339,8 +339,7 @@ def extract_json_object(
 
     if start == -1 or end == -1 or end < start:
         raise RuntimeError(
-            "The coaching model did not return JSON.\n"
-            f"Raw output:\n{cleaned}"
+            "The coaching model did not return a JSON object."
         )
 
     return cleaned[start:end + 1]
@@ -546,8 +545,7 @@ def generate_coaching_item(
 
     except Exception as error:
         raise RuntimeError(
-            "The coaching model returned invalid JSON.\n"
-            f"Raw output:\n{raw_text}"
+            "The coaching model returned invalid JSON."
         ) from error
 
     validate_coaching_activity(

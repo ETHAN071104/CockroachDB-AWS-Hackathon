@@ -35,16 +35,16 @@ class ApiFoundationTest(unittest.TestCase):
         self.assertIs(cli_module.main, backend_cli_module.main)
 
     def test_factory_and_module_level_app_are_fastapi_apps(self) -> None:
-        application = app_module.create_app()
+        application = app_module.create_app(allow_legacy_default_workspace=True)
 
         self.assertIsInstance(application, FastAPI)
         self.assertIsInstance(app_module.app, FastAPI)
         self.assertIsNot(application, app_module.app)
         self.assertEqual(application.title, "Local Study Companion API")
-        self.assertEqual(application.version, "0.7.0")
+        self.assertEqual(application.version, "0.8.0")
 
     def test_lifespan_initializes_storage_and_health_stays_lazy(self) -> None:
-        application = app_module.create_app()
+        application = app_module.create_app(allow_legacy_default_workspace=True)
 
         with (
             patch.object(app_module, "initialize_database") as initialize_documents,
@@ -94,24 +94,30 @@ class ApiFoundationTest(unittest.TestCase):
             create_chat_model.assert_not_called()
 
     def test_not_found_uses_structured_error_envelope(self) -> None:
-        application = app_module.create_app()
+        application = app_module.create_app(allow_legacy_default_workspace=True)
 
         with self._client(application) as client:
             response = client.get("/api/does-not-exist")
 
         self.assertEqual(response.status_code, 404)
+        error = response.json()["error"]
+        self.assertEqual(error["code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(error["title"], "Resource not found")
         self.assertEqual(
-            response.json(),
-            {
-                "error": {
-                    "code": "not_found",
-                    "message": "The requested resource was not found.",
-                }
-            },
+            error["reason"],
+            "The requested resource was not found.",
         )
+        self.assertEqual(
+            error["message"],
+            "The requested resource was not found.",
+        )
+        self.assertFalse(error["retryable"])
+        self.assertIsNone(error["details"])
+        self.assertRegex(error["request_id"], r"^[a-f0-9]{32}$")
+        self.assertEqual(response.headers["x-request-id"], error["request_id"])
 
     def test_validation_error_uses_structured_safe_details(self) -> None:
-        application = app_module.create_app()
+        application = app_module.create_app(allow_legacy_default_workspace=True)
 
         @application.get("/_test/items/{item_id}")
         def get_test_item(item_id: int) -> dict[str, int]:
@@ -122,10 +128,19 @@ class ApiFoundationTest(unittest.TestCase):
 
         payload = response.json()
         self.assertEqual(response.status_code, 422)
-        self.assertEqual(payload["error"]["code"], "validation_error")
+        self.assertEqual(payload["error"]["code"], "VALIDATION_ERROR")
         self.assertEqual(
             payload["error"]["message"],
             "Request validation failed.",
+        )
+        self.assertEqual(
+            payload["error"]["reason"],
+            "One or more request fields are invalid.",
+        )
+        self.assertFalse(payload["error"]["retryable"])
+        self.assertRegex(
+            payload["error"]["request_id"],
+            r"^[a-f0-9]{32}$",
         )
         self.assertEqual(
             payload["error"]["details"][0]["field"],
@@ -134,7 +149,7 @@ class ApiFoundationTest(unittest.TestCase):
         self.assertNotIn("input", payload["error"]["details"][0])
 
     def test_unexpected_error_hides_exception_and_stack_trace(self) -> None:
-        application = app_module.create_app()
+        application = app_module.create_app(allow_legacy_default_workspace=True)
 
         @application.get("/_test/failure")
         def fail() -> None:
@@ -150,21 +165,24 @@ class ApiFoundationTest(unittest.TestCase):
             response = client.get("/_test/failure")
 
         self.assertEqual(response.status_code, 500)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "INTERNAL_ERROR")
         self.assertEqual(
-            response.json(),
-            {
-                "error": {
-                    "code": "internal_error",
-                    "message": "An unexpected server error occurred.",
-                }
-            },
+            payload["title"],
+            "Agentbook could not complete the request",
         )
+        self.assertEqual(
+            payload["message"],
+            "An unexpected server error occurred.",
+        )
+        self.assertFalse(payload["retryable"])
+        self.assertRegex(payload["request_id"], r"^[a-f0-9]{32}$")
         self.assertNotIn("secret filesystem path", response.text)
         self.assertNotIn("Traceback", response.text)
         log_error.assert_called_once()
 
     def test_cors_allows_vite_loopback_origin(self) -> None:
-        application = app_module.create_app()
+        application = app_module.create_app(allow_legacy_default_workspace=True)
 
         with self._client(application) as client:
             response = client.options(

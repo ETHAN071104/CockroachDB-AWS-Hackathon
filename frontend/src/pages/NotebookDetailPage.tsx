@@ -28,6 +28,7 @@ import {
   ConfirmationDialog,
   Dialog,
   EmptyState,
+  ErrorNotice,
   ErrorState,
   LoadingState,
   Notice,
@@ -59,7 +60,10 @@ function formatDate(value: string | null) {
 }
 
 function isMissingSummary(error: unknown) {
-  return error instanceof ApiError && error.code === "summary_not_generated";
+  return error instanceof ApiError && (
+    error.code === "SUMMARY_NOT_GENERATED"
+    || error.legacyCode === "summary_not_generated"
+  );
 }
 
 function SummaryContent({ summary }: { summary: Summary }) {
@@ -589,10 +593,10 @@ export function NotebookDetailPage() {
               />
             )}
             {generateSummary.error ? (
-              <Notice tone="error" title="Summary generation failed">
-                {getErrorMessage(generateSummary.error)} Any previous cached summary was
-                preserved.
-              </Notice>
+              <ErrorNotice
+                error={generateSummary.error}
+                onRetry={() => generateSummary.retry()}
+              />
             ) : null}
           </Card>
         </section>

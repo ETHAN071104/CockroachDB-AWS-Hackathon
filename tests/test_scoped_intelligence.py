@@ -889,7 +889,7 @@ class IntelligenceApiTest(unittest.TestCase):
         self.stack.enter_context(patch("backend.api.errors.LOGGER.error"))
         self.client = self.stack.enter_context(
             TestClient(
-                app_module.create_app(),
+                app_module.create_app(allow_legacy_default_workspace=True),
                 raise_server_exceptions=False,
             )
         )

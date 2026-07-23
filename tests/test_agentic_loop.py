@@ -89,6 +89,7 @@ class AgenticLearningLoopTest(unittest.TestCase):
             "agentic-loop-source",
             b"Chlorophyll source",
         )
+        rag_database.update_chunk_count(self.document_id, 1)
         self.generated = self._generated_quiz()
         self.vectors = _MemoryVectors()
         self.stack.enter_context(
@@ -187,6 +188,17 @@ class AgenticLearningLoopTest(unittest.TestCase):
 
         restarted.workspaces.create(SECOND_WORKSPACE_ID, "Isolated learner")
         isolated_dependencies = build_application_dependencies(SECOND_WORKSPACE_ID)
+        isolated_document_id = isolated_dependencies.documents.insert(
+            "isolated-plants.pdf",
+            "application/pdf",
+            "isolated-agentic-loop-source",
+            b"Isolated chlorophyll source",
+        )
+        rag_database.update_chunk_count(
+            isolated_document_id,
+            1,
+            workspace_id=SECOND_WORKSPACE_ID,
+        )
         configure_application_dependencies(isolated_dependencies)
         isolated = quiz_api.generate_quiz_for_api("plant energy", 1)
         self.assertFalse(isolated.adaptation.adapted)
