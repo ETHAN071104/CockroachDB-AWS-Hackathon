@@ -319,6 +319,26 @@ The API is synchronous by design because the existing domain workflows are synch
 
 `details` is optional. Responses never intentionally expose uploaded file bytes, content hashes, filesystem paths, internal prompts, raw Chroma metadata, secrets, stack traces, or provider reasoning.
 
+### Public integer IDs
+
+Public integer identifiers are opaque decimal strings at every HTTP and
+browser boundary, even though repositories keep exact Python integers and
+CockroachDB stores them as `INT8`. This applies to notebook, document, study
+session, interaction, quiz-attempt, quiz-question-attempt, learner-memory, and
+nested source/evidence references.
+
+- Valid ID text matches `^[1-9][0-9]*$`; for example,
+  `"3557348663300104065"`.
+- Send IDs in paths, query/form fields, and JSON bodies as strings.
+- Responses always serialize these IDs as strings.
+- Positive JSON numbers are accepted for temporary compatibility only when
+  they are no larger than JavaScript's safe-integer limit
+  (`9007199254740991`).
+- Larger numeric JSON values fail with `PUBLIC_ID_STRING_REQUIRED`; malformed
+  values fail with `INVALID_PUBLIC_ID`.
+- Counts, page/slide/chunk positions, question and option numbers, durations,
+  scores, confidence values, and distances remain JSON numbers.
+
 Major route groups:
 
 | Route family | Purpose |
@@ -492,7 +512,9 @@ Run compilation and the complete standard-library test suite from the repository
 
 ```powershell
 python -m compileall backend api main.py tests
+$env:PERSISTENCE_BACKEND='sqlite'
 python -m unittest discover -s tests -p "test_*.py" -v
+Remove-Item Env:PERSISTENCE_BACKEND
 ```
 
 Backend tests isolate state with temporary SQLite/Chroma directories, fake embeddings, mocked LLMs, fresh pending registries, and cleared caches. Coverage includes migrations, structured API errors, notebooks, assignments, ingestion, scoped retrieval, intelligence caches, chat, sessions, learner-memory decisions, quiz secrecy/scoring, reports, integrity, rollback/compensation, and export exclusions.

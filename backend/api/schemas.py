@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from backend.api.public_ids import PublicId, PublicIdData, PublicIdInput
+
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(
@@ -86,7 +88,7 @@ class NotebookUpdate(ApiModel):
 
 
 class NotebookResponse(ApiModel):
-    id: int | None
+    id: PublicId | None
     name: str
     description: str
     document_count: int = Field(ge=0)
@@ -102,13 +104,13 @@ class NotebookListResponse(ApiModel):
 
 
 class DocumentResponse(ApiModel):
-    id: int
+    id: PublicId
     filename: str
     mime_type: str
     chunk_count: int = Field(ge=0)
     created_at: str
     updated_at: str
-    notebook_id: int | None = None
+    notebook_id: PublicId | None = None
 
 
 class DocumentListResponse(ApiModel):
@@ -117,7 +119,7 @@ class DocumentListResponse(ApiModel):
 
 
 class DocumentAssignment(ApiModel):
-    notebook_id: int | None
+    notebook_id: PublicIdInput | None
 
 
 class DocumentUploadResponse(ApiModel):
@@ -131,8 +133,8 @@ class DeleteResponse(ApiModel):
 
 
 class RetrievalScopeRequest(ApiModel):
-    notebook_id: int | None = Field(default=None, ge=1)
-    document_ids: list[int] | None = Field(
+    notebook_id: PublicIdInput | None = None
+    document_ids: list[PublicIdInput] | None = Field(
         default=None,
         min_length=1,
         max_length=100,
@@ -160,8 +162,8 @@ class RetrievalScopeRequest(ApiModel):
 
 class SourceLineageResponse(ApiModel):
     index: int = Field(ge=1)
-    document_id: int | None = None
-    notebook_id: int | None = None
+    document_id: PublicId | None = None
+    notebook_id: PublicId | None = None
     filename: str
     mime_type: str | None = None
     page_number: int | None = None
@@ -214,8 +216,8 @@ class QuizGenerateRequest(ApiModel):
     topic: str = Field(min_length=1, max_length=300)
     question_count: int = Field(default=3, ge=1, le=10)
     scope: RetrievalScopeRequest | None = None
-    notebook_id: int | None = Field(default=None, ge=1)
-    document_ids: list[int] | None = Field(
+    notebook_id: PublicIdInput | None = None
+    document_ids: list[PublicIdInput] | None = Field(
         default=None,
         min_length=1,
         max_length=100,
@@ -267,7 +269,7 @@ class QuizScopeResponse(ApiModel):
     label: str
     document_count: int = Field(ge=1)
     personalized: bool
-    resolved_document_ids: list[int] = Field(min_length=1)
+    resolved_document_ids: list[PublicId] = Field(min_length=1)
     description: str
     notebook_name: str | None = None
     document_name: str | None = None
@@ -278,9 +280,9 @@ class AdaptationResponse(ApiModel):
     targeted_topic: str | None = None
     difficulty: str | None = None
     reason: str
-    memory_ids: list[int] = Field(default_factory=list)
+    memory_ids: list[PublicId] = Field(default_factory=list)
     learning_signal_ids: list[str] = Field(default_factory=list)
-    applied_changes: dict[str, Any] = Field(default_factory=dict)
+    applied_changes: PublicIdData = Field(default_factory=dict)
     event_id: str | None = None
 
 
@@ -292,14 +294,14 @@ class LearningSignalResponse(ApiModel):
     topic: str
     signal_type: str
     statement: str
-    evidence: list[dict[str, Any]]
+    evidence: list[PublicIdData]
     confidence: float = Field(ge=0, le=1)
     importance: float = Field(ge=0, le=1)
     occurrence_count: int = Field(ge=1)
     status: str
     first_observed_at: str
     last_observed_at: str
-    memory_id: int | None = None
+    memory_id: PublicId | None = None
     proposal_id: str | None = None
 
 
@@ -311,7 +313,7 @@ class QuizMemoryProposalResponse(ApiModel):
     importance: float = Field(ge=0, le=1)
     allowed_decisions: list[str]
     reason: str
-    evidence: list[dict[str, Any]]
+    evidence: list[PublicIdData]
     occurrence_count: int = Field(ge=1)
     created_at: str
 
@@ -347,7 +349,7 @@ class QuizQuestionFeedbackResponse(ApiModel):
 
 
 class QuizSubmissionResponse(ApiModel):
-    attempt_id: int
+    attempt_id: PublicId
     status: Literal["completed", "aborted"]
     total_questions: int
     presented_questions: int
@@ -387,8 +389,8 @@ StudyOutcome = Literal[
 
 class ChatRequest(ApiModel):
     question: str = Field(min_length=1, max_length=4000)
-    notebook_id: int | None = Field(default=None, ge=1)
-    document_ids: list[int] | None = Field(
+    notebook_id: PublicIdInput | None = None
+    document_ids: list[PublicIdInput] | None = Field(
         default=None,
         max_length=100,
     )
@@ -434,12 +436,12 @@ class MemoryProposalResponse(ApiModel):
     importance: float = Field(ge=0, le=1)
     conflict_type: Literal["new", "refinement", "contradiction"]
     conflict_confidence: float = Field(ge=0, le=1)
-    existing_memory_id: int | None = None
+    existing_memory_id: PublicId | None = None
     existing_memory_content: str | None = None
     allowed_decisions: list[MemoryDecision]
     reason: str
     created_at: str
-    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    evidence: list[PublicIdData] = Field(default_factory=list)
     learning_signal_ids: list[str] = Field(default_factory=list)
     source_type: str | None = None
     source_id: str | None = None
@@ -448,8 +450,8 @@ class MemoryProposalResponse(ApiModel):
 
 
 class ChatResponse(ApiModel):
-    session_id: int
-    interaction_id: int
+    session_id: PublicId
+    interaction_id: PublicId
     answer: str
     sources: list[StudySourceResponse]
     memory_proposal: MemoryProposalResponse | None = None
@@ -480,7 +482,7 @@ class InteractionOutcomeUpdate(ApiModel):
 
 
 class StudySessionResponse(ApiModel):
-    id: int
+    id: PublicId
     status: Literal["active", "completed"]
     started_at: str
     ended_at: str | None = None
@@ -492,8 +494,8 @@ class StudySessionListResponse(ApiModel):
 
 
 class StudyInteractionResponse(ApiModel):
-    id: int
-    session_id: int
+    id: PublicId
+    session_id: PublicId
     question: str
     answer: str
     outcome: StudyOutcome
@@ -535,7 +537,7 @@ class MemoryUpdate(ApiModel):
 
 
 class MemoryResponse(ApiModel):
-    id: int
+    id: PublicId
     memory_type: MemoryType
     content: str
     confidence: float = Field(ge=0, le=1)
@@ -543,7 +545,7 @@ class MemoryResponse(ApiModel):
     status: MemoryStatus
     created_at: str
     updated_at: str
-    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    evidence: list[PublicIdData] = Field(default_factory=list)
     source_quiz_id: str | None = None
     occurrence_count: int = Field(default=0, ge=0)
     improvement_state: str | None = None
@@ -556,7 +558,7 @@ class MemoryListResponse(ApiModel):
 
 
 class MemorySearchItemResponse(ApiModel):
-    memory_id: int
+    memory_id: PublicId
     memory_type: MemoryType
     content: str
     confidence: float = Field(ge=0, le=1)
@@ -571,7 +573,7 @@ class MemorySearchResponse(ApiModel):
 
 class MemoryProposalDecisionRequest(ApiModel):
     decision: MemoryDecision
-    replace_memory_id: int | None = Field(default=None, ge=1)
+    replace_memory_id: PublicIdInput | None = None
     edited_content: str | None = Field(default=None, min_length=12, max_length=500)
 
 
@@ -584,7 +586,7 @@ class MemoryProposalDecisionResultResponse(ApiModel):
 
 
 class ConsolidationProposeRequest(ApiModel):
-    memory_ids: list[int] = Field(min_length=2, max_length=50)
+    memory_ids: list[PublicIdInput] = Field(min_length=2, max_length=50)
 
     @model_validator(mode="after")
     def validate_memory_ids(self) -> "ConsolidationProposeRequest":

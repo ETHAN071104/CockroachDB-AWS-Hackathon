@@ -14,6 +14,8 @@ import {
   ApiError,
   api,
   getErrorMessage,
+  isPublicId,
+  type PublicId,
   type Summary,
 } from "../api";
 import {
@@ -112,15 +114,14 @@ function DocumentSummary({ summary }: { summary: Summary }) {
 export function DocumentDetailPage() {
   const { documentId = "" } = useParams<{ documentId: string }>();
   const navigate = useNavigate();
-  const numericId = Number(documentId);
-  const validId = Number.isInteger(numericId) && numericId > 0;
+  const validId = isPublicId(documentId);
   const [destination, setDestination] = useState("unsorted");
   const [destinationTouched, setDestinationTouched] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   const document = useApiQuery(
-    ["document", numericId],
-    (signal) => api.getDocument(numericId, { signal }),
+    ["document", documentId],
+    (signal) => api.getDocument(documentId, { signal }),
     {
       enabled: validId,
       onSuccess: (record) => {
@@ -136,25 +137,25 @@ export function DocumentDetailPage() {
     api.listNotebooks(undefined, { signal }),
   );
   const summary = useApiQuery(
-    ["summary", "document", numericId],
-    (signal) => api.getCachedSummary("document", numericId, { signal }),
+    ["summary", "document", documentId],
+    (signal) => api.getCachedSummary("document", documentId, { signal }),
     { enabled: validId },
   );
 
   const assignAction = useAsyncAction(
-    (notebookId: number | null, signal: AbortSignal) =>
-      api.assignDocument(numericId, notebookId, { signal }),
+    (notebookId: PublicId | null, signal: AbortSignal) =>
+      api.assignDocument(documentId, notebookId, { signal }),
   );
-  const deleteAction = useAsyncAction((id: number, signal: AbortSignal) =>
+  const deleteAction = useAsyncAction((id: PublicId, signal: AbortSignal) =>
     api.deleteDocument(id, { signal }),
   );
-  const generateSummary = useAsyncAction((id: number, signal: AbortSignal) =>
+  const generateSummary = useAsyncAction((id: PublicId, signal: AbortSignal) =>
     api.generateSummary("document", id, { signal }),
   );
 
   async function handleAssignment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const notebookId = destination === "unsorted" ? null : Number(destination);
+    const notebookId = destination === "unsorted" ? null : destination;
     try {
       const updated = await assignAction.run(notebookId);
       if (!updated) return;
@@ -181,7 +182,7 @@ export function DocumentDetailPage() {
 
   async function handleDelete() {
     try {
-      const result = await deleteAction.run(numericId);
+      const result = await deleteAction.run(documentId);
       if (!result) return;
       navigate("/notebooks", { replace: true });
     } catch {
@@ -191,7 +192,7 @@ export function DocumentDetailPage() {
 
   async function handleGenerateSummary() {
     try {
-      const result = await generateSummary.run(numericId);
+      const result = await generateSummary.run(documentId);
       if (result) summary.setData(result);
     } catch {
       // Existing cache stays visible if regeneration fails.
@@ -202,7 +203,7 @@ export function DocumentDetailPage() {
     return (
       <ErrorState
         title="Invalid document"
-        message="Document IDs must be positive numbers."
+        message="Document IDs must contain positive decimal digits."
       />
     );
   }

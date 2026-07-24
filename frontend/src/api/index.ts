@@ -32,4 +32,5 @@ export {
   systemApi,
 } from './endpoints';
 export type { DocumentListFilters, ReviewQueueFilters } from './endpoints';
+export { isPublicId, PUBLIC_ID_PATTERN } from './publicIds';
 export type * from './types';

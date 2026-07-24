@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, Path, Query, UploadFile
 
 from backend.api.errors import ApiError
+from backend.api.public_ids import PublicIdInput, parse_public_id
 from backend.api.schemas import (
     DeleteResponse,
     DocumentAssignment,
@@ -156,14 +157,14 @@ def get_unsorted_documents(
 
 @router.get("/notebooks/{notebook_id}", response_model=NotebookResponse)
 def get_notebook_route(
-    notebook_id: Annotated[int, Path(ge=1)],
+    notebook_id: Annotated[PublicIdInput, Path()],
 ) -> NotebookResponse:
     return _notebook_response(_notebook_or_404(notebook_id))
 
 
 @router.patch("/notebooks/{notebook_id}", response_model=NotebookResponse)
 def patch_notebook(
-    notebook_id: Annotated[int, Path(ge=1)],
+    notebook_id: Annotated[PublicIdInput, Path()],
     payload: NotebookUpdate,
 ) -> NotebookResponse:
     try:
@@ -195,7 +196,7 @@ def patch_notebook(
 
 @router.delete("/notebooks/{notebook_id}", response_model=DeleteResponse)
 def delete_notebook_route(
-    notebook_id: Annotated[int, Path(ge=1)],
+    notebook_id: Annotated[PublicIdInput, Path()],
 ) -> DeleteResponse:
     try:
         deleted = _repository().delete(notebook_id)
@@ -219,7 +220,7 @@ def delete_notebook_route(
     response_model=DocumentListResponse,
 )
 def get_notebook_documents(
-    notebook_id: Annotated[int, Path(ge=1)],
+    notebook_id: Annotated[PublicIdInput, Path()],
     q: Annotated[str | None, Query(max_length=255)] = None,
 ) -> DocumentListResponse:
     _notebook_or_404(notebook_id)
@@ -238,8 +239,8 @@ def get_notebook_documents(
     response_model=DocumentResponse,
 )
 def put_document_in_notebook(
-    notebook_id: Annotated[int, Path(ge=1)],
-    document_id: Annotated[int, Path(ge=1)],
+    notebook_id: Annotated[PublicIdInput, Path()],
+    document_id: Annotated[PublicIdInput, Path()],
 ) -> DocumentResponse:
     try:
         return _document_response(
@@ -264,8 +265,8 @@ def put_document_in_notebook(
     response_model=DocumentResponse,
 )
 def remove_document_from_named_notebook(
-    notebook_id: Annotated[int, Path(ge=1)],
-    document_id: Annotated[int, Path(ge=1)],
+    notebook_id: Annotated[PublicIdInput, Path()],
+    document_id: Annotated[PublicIdInput, Path()],
 ) -> DocumentResponse:
     document = _document_or_404(document_id)
     _notebook_or_404(notebook_id)
@@ -291,19 +292,16 @@ def get_documents(
             unsorted_only = True
         else:
             try:
-                parsed_notebook_id = int(notebook_id)
+                parsed_notebook_id = parse_public_id(notebook_id)
             except ValueError as error:
                 raise ApiError(
                     status_code=422,
-                    code="validation_error",
-                    message="notebook_id must be a positive integer or 'unsorted'.",
+                    code="INVALID_PUBLIC_ID",
+                    message=(
+                        "notebook_id must be a positive decimal string "
+                        "or 'unsorted'."
+                    ),
                 ) from error
-            if parsed_notebook_id <= 0:
-                raise ApiError(
-                    status_code=422,
-                    code="validation_error",
-                    message="notebook_id must be a positive integer or 'unsorted'.",
-                )
 
     try:
         documents = _repository().list_documents(
@@ -331,7 +329,7 @@ def get_documents(
 )
 def upload_document(
     file: Annotated[UploadFile, File()],
-    notebook_id: Annotated[int | None, Form(ge=1)] = None,
+    notebook_id: Annotated[PublicIdInput | None, Form()] = None,
 ) -> DocumentUploadResponse:
     if notebook_id is not None:
         _notebook_or_404(notebook_id)
@@ -390,7 +388,7 @@ def upload_document(
 
 @router.get("/documents/{document_id}", response_model=DocumentResponse)
 def get_document_route(
-    document_id: Annotated[int, Path(ge=1)],
+    document_id: Annotated[PublicIdInput, Path()],
 ) -> DocumentResponse:
     return _document_response(_document_or_404(document_id))
 
@@ -400,7 +398,7 @@ def get_document_route(
     response_model=DocumentResponse,
 )
 def patch_document_notebook(
-    document_id: Annotated[int, Path(ge=1)],
+    document_id: Annotated[PublicIdInput, Path()],
     payload: DocumentAssignment,
 ) -> DocumentResponse:
     try:
@@ -429,7 +427,7 @@ def patch_document_notebook(
 
 @router.delete("/documents/{document_id}", response_model=DeleteResponse)
 def delete_document_route(
-    document_id: Annotated[int, Path(ge=1)],
+    document_id: Annotated[PublicIdInput, Path()],
 ) -> DeleteResponse:
     _document_or_404(document_id)
     delete_document(document_id)

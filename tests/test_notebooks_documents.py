@@ -120,7 +120,7 @@ class NotebookDocumentApiTest(unittest.TestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(
             [item["id"] for item in self._items(listed.json(), "notebooks")],
-            [notebook_id],
+            [str(notebook_id)],
         )
 
         updated_response = self.client.patch(
@@ -187,7 +187,7 @@ class NotebookDocumentApiTest(unittest.TestCase):
                     "documents",
                 )
             ],
-            [document_id],
+            [str(document_id)],
         )
 
         move = self.client.patch(
@@ -196,7 +196,7 @@ class NotebookDocumentApiTest(unittest.TestCase):
         )
         self.assertEqual(move.status_code, 200)
         moved = self._resource(move.json(), "document")
-        self.assertEqual(moved["notebook_id"], chemistry_id)
+        self.assertEqual(moved["notebook_id"], str(chemistry_id))
 
         chemistry_filter = self.client.get(
             "/api/documents",
@@ -211,7 +211,7 @@ class NotebookDocumentApiTest(unittest.TestCase):
                     "documents",
                 )
             ],
-            [document_id],
+            [str(document_id)],
         )
 
         search = self.client.get(
@@ -221,13 +221,13 @@ class NotebookDocumentApiTest(unittest.TestCase):
         self.assertEqual(search.status_code, 200)
         self.assertEqual(
             [item["id"] for item in self._items(search.json(), "documents")],
-            [document_id],
+            [str(document_id)],
         )
 
         detail_response = self.client.get(f"/api/documents/{document_id}")
         self.assertEqual(detail_response.status_code, 200)
         detail = self._resource(detail_response.json(), "document")
-        self.assertEqual(detail["id"], document_id)
+        self.assertEqual(detail["id"], str(document_id))
         self.assertNotIn("file_data", detail)
         self.assertNotIn("file_hash", detail)
         self.assertNotIn("path", detail)
@@ -281,7 +281,7 @@ class NotebookDocumentApiTest(unittest.TestCase):
                 item["id"]
                 for item in self._items(first_documents.json(), "documents")
             ],
-            [first_document_id],
+            [str(first_document_id)],
         )
         self.assertEqual(
             self._items(second_documents.json(), "documents"),

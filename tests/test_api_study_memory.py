@@ -1044,12 +1044,12 @@ class ChatApiTest(unittest.TestCase):
         self.assertEqual(payload["intent"], "document_question")
         self.assertEqual(payload["evidence_status"], "grounded")
         self.assertIsNone(payload["redirect"])
-        self.assertIsInstance(payload["session_id"], int)
-        self.assertIsInstance(payload["interaction_id"], int)
+        self.assertRegex(payload["session_id"], r"^[1-9][0-9]*$")
+        self.assertRegex(payload["interaction_id"], r"^[1-9][0-9]*$")
         self.assertEqual(payload["memory_proposal"]["proposal_id"], self.pending_proposal.id)
 
         interaction = study_database.get_study_interaction(
-            payload["interaction_id"]
+            int(payload["interaction_id"])
         )
         self.assertEqual(interaction.outcome, "unrated")
         sources = study_database.list_interaction_sources(interaction.id)

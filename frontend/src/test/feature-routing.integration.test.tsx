@@ -53,8 +53,8 @@ describe('AI feature responsibility routing', () => {
         if (init?.method === 'GET' && scoped) return scoped;
         if (init?.method === 'POST' && url.endsWith('/api/chat')) {
           return jsonResponse({
-            session_id: 1,
-            interaction_id: 2,
+            session_id: "1",
+            interaction_id: "2",
             answer: 'Coaching uses performance history.',
             sources: [],
             memory_proposal: null,
@@ -108,8 +108,8 @@ describe('AI feature responsibility routing', () => {
         if (init?.method === 'GET' && scoped) return scoped;
         if (init?.method === 'POST' && url.endsWith('/api/chat')) {
           return jsonResponse({
-            session_id: 1,
-            interaction_id: 3,
+            session_id: "1",
+            interaction_id: "3",
             answer: 'Study Plan can organize this request.',
             sources: [],
             memory_proposal: null,
@@ -154,13 +154,13 @@ describe('AI feature responsibility routing', () => {
         if (init?.method === 'GET' && scoped) return scoped;
         if (init?.method === 'POST' && url.endsWith('/api/chat')) {
           return jsonResponse({
-            session_id: 1,
-            interaction_id: 4,
+            session_id: "1",
+            interaction_id: "4",
             answer: 'Mitochondria convert stored energy for cells [1].',
             sources: [
               {
                 index: 1,
-                document_id: 9,
+                document_id: "9",
                 notebook_id: null,
                 filename: 'lesson.pdf',
                 mime_type: 'application/pdf',

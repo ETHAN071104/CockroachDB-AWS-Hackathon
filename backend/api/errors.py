@@ -274,6 +274,22 @@ def install_error_handlers(app: FastAPI) -> None:
         request: Request,
         error: RequestValidationError,
     ) -> JSONResponse:
+        error_types = {
+            str(item.get("type", ""))
+            for item in error.errors()
+        }
+        if "public_id_string_required" in error_types:
+            code = "PUBLIC_ID_STRING_REQUIRED"
+            reason = (
+                "Large public IDs cannot be represented safely as "
+                "JavaScript numbers."
+            )
+        elif "invalid_public_id" in error_types:
+            code = "INVALID_PUBLIC_ID"
+            reason = "The supplied public ID is not a positive decimal string."
+        else:
+            code = "VALIDATION_ERROR"
+            reason = "One or more request fields are invalid."
         details = [
             {
                 "field": ".".join(str(part) for part in item["loc"]),
@@ -284,9 +300,9 @@ def install_error_handlers(app: FastAPI) -> None:
         ]
         api_error = ApiError(
             status_code=422,
-            code="VALIDATION_ERROR",
+            code=code,
             message="Request validation failed.",
-            reason="One or more request fields are invalid.",
+            reason=reason,
             details=details,
             log_context={"validation_stage": "request"},
         )

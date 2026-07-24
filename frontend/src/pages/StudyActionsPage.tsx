@@ -20,6 +20,7 @@ import { useSearchParams } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import type {
   CoachingPlan,
+  PublicId,
   PresentedQuiz,
   QuizAnswer,
   QuizScopeInfo,
@@ -69,7 +70,7 @@ type QuizScopePreview = Omit<
   'document_count' | 'resolved_document_ids'
 > & {
   document_count?: number;
-  resolved_document_ids?: number[];
+  resolved_document_ids?: PublicId[];
 };
 
 function parseQuizScope(searchParams: URLSearchParams): QuizScopeSelection {
@@ -111,10 +112,9 @@ function parseQuizScope(searchParams: URLSearchParams): QuizScopeSelection {
     if (notebookValues.length !== 1 || !/^[1-9]\d*$/.test(rawNotebookId)) {
       return invalidQuizScope('The selected notebook scope is invalid. Choose the notebook again.');
     }
-    const notebookId = Number(rawNotebookId);
     const label = requestedLabel || 'Selected notebook';
     return {
-      scope: { notebook_id: notebookId },
+      scope: { notebook_id: rawNotebookId },
       label,
       preview: {
         type: 'notebook',
@@ -128,7 +128,7 @@ function parseQuizScope(searchParams: URLSearchParams): QuizScopeSelection {
 
   if (documentValues.length) {
     const validValues = documentValues.every((value) => /^[1-9]\d*$/.test(value));
-    const documentIds = documentValues.map(Number);
+    const documentIds = documentValues;
     if (!validValues || new Set(documentIds).size !== documentIds.length) {
       return invalidQuizScope('The selected document scope is invalid. Choose the document again.');
     }
@@ -289,15 +289,15 @@ function ReviewWorkspace({ scope }: { scope?: RetrievalScope }) {
     (signal) => apiClient.get(reviewQueuePath, { signal }),
   );
   const [result, setResult] = useState<ReviewAction | null>(null);
-  const generate = useAsyncAction((interactionId: number, signal: AbortSignal) =>
-    apiClient.post<ReviewAction, { interaction_id: number; scope: RetrievalScope | null }>(
+  const generate = useAsyncAction((interactionId: PublicId, signal: AbortSignal) =>
+    apiClient.post<ReviewAction, { interaction_id: PublicId; scope: RetrievalScope | null }>(
       '/api/study/actions/review',
       { interaction_id: interactionId, scope: scope ?? null },
       { signal },
     ),
   );
 
-  async function handleGenerate(interactionId: number) {
+  async function handleGenerate(interactionId: PublicId) {
     try {
       setResult(await generate.run(interactionId));
     } catch {

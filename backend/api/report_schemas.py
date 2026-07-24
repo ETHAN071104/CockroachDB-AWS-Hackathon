@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from backend.api.public_ids import PublicId, PublicIdInput
 from backend.api.schemas import (
     AdaptationResponse,
     ApiModel,
@@ -20,8 +21,8 @@ class OutcomeCountsResponse(ApiModel):
 
 
 class InteractionReportResponse(ApiModel):
-    id: int
-    session_id: int
+    id: PublicId
+    session_id: PublicId
     question: str
     answer: str
     outcome: Literal["unrated", "understood", "partial", "confused"]
@@ -30,7 +31,7 @@ class InteractionReportResponse(ApiModel):
 
 
 class SessionReportResponse(ApiModel):
-    id: int
+    id: PublicId
     status: Literal["active", "completed"]
     started_at: str
     ended_at: str | None
@@ -54,7 +55,7 @@ class SessionSummaryResponse(ApiModel):
 
 
 class ProgressSessionResponse(ApiModel):
-    session_id: int
+    session_id: PublicId
     started_at: str
     ended_at: str
     interaction_count: int
@@ -72,7 +73,7 @@ class ProgressReportResponse(ApiModel):
 
 
 class StoredQuizAttemptResponse(ApiModel):
-    id: int
+    id: PublicId
     requested_topic: str
     quiz_topic: str
     status: Literal["completed", "aborted"]
@@ -88,7 +89,7 @@ class StoredQuizAttemptResponse(ApiModel):
 
 
 class StoredQuizQuestionResponse(ApiModel):
-    id: int
+    id: PublicId
     question_number: int
     question: str
     options: list[str]
@@ -133,17 +134,17 @@ class QuizPerformanceResponse(ApiModel):
 
 
 class ReviewRecommendationResponse(ApiModel):
-    interaction_id: int
-    session_id: int
+    interaction_id: PublicId
+    session_id: PublicId
     question: str
     outcome: Literal["partial", "confused"]
     priority_score: int
     unresolved_count: int
     source_filenames: list[str]
-    source_document_ids: list[int]
+    source_document_ids: list[PublicId]
     created_at: str
     reason: str
-    memory_ids: list[int] = Field(default_factory=list)
+    memory_ids: list[PublicId] = Field(default_factory=list)
     learning_signal_ids: list[str] = Field(default_factory=list)
     adaptation_reason: str | None = None
 
@@ -157,7 +158,7 @@ class ReviewQueueResponse(ApiModel):
 
 
 class ReviewGenerateRequest(ApiModel):
-    interaction_id: int = Field(ge=1)
+    interaction_id: PublicIdInput
     scope: RetrievalScopeRequest | None = None
 
 
@@ -188,7 +189,7 @@ class StudyPlanRequest(ApiModel):
 class StudyPlanEvidenceResponse(ApiModel):
     evidence_type: Literal["study_outcome", "quiz_result"]
     status: str
-    reference_id: int
+    reference_id: PublicId
     detail: str
 
 
@@ -200,7 +201,7 @@ class StudyPlanItemResponse(ApiModel):
     estimated_minutes: int
     evidence: list[StudyPlanEvidenceResponse]
     source_filenames: list[str]
-    source_document_ids: list[int]
+    source_document_ids: list[PublicId]
 
 
 class StudyPlanResponse(ApiModel):
@@ -249,7 +250,7 @@ class IntegrityIssueResponse(ApiModel):
     code: str
     message: str
     record_type: str
-    record_id: int | str | None
+    record_id: str | None
 
 
 class IntegrityResponse(ApiModel):

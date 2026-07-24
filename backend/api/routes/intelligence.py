@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query
 
 from backend.api.errors import ApiError, map_exception
+from backend.api.public_ids import PublicIdInput
 from backend.api.schemas import (
     SourceLineageResponse,
     SummaryContentResponse,
@@ -146,7 +147,7 @@ def _post_summary(kind: str, scope_id: int | str) -> SummaryResponse:
     response_model=SummaryResponse,
 )
 def get_document_summary(
-    document_id: Annotated[int, Path(ge=1)],
+    document_id: Annotated[PublicIdInput, Path()],
 ) -> SummaryResponse:
     return _get_summary_or_404("document", document_id)
 
@@ -156,7 +157,7 @@ def get_document_summary(
     response_model=SummaryResponse,
 )
 def post_document_summary(
-    document_id: Annotated[int, Path(ge=1)],
+    document_id: Annotated[PublicIdInput, Path()],
 ) -> SummaryResponse:
     return _post_summary("document", document_id)
 
@@ -166,7 +167,7 @@ def post_document_summary(
     response_model=SummaryResponse,
 )
 def get_notebook_summary(
-    notebook_id: Annotated[int, Path(ge=1)],
+    notebook_id: Annotated[PublicIdInput, Path()],
 ) -> SummaryResponse:
     return _get_summary_or_404("notebook", notebook_id)
 
@@ -176,7 +177,7 @@ def get_notebook_summary(
     response_model=SummaryResponse,
 )
 def post_notebook_summary(
-    notebook_id: Annotated[int, Path(ge=1)],
+    notebook_id: Annotated[PublicIdInput, Path()],
 ) -> SummaryResponse:
     return _post_summary("notebook", notebook_id)
 
@@ -258,7 +259,7 @@ def _scoped_topics(
     response_model=TopicListResponse,
 )
 def get_document_topics(
-    document_id: Annotated[int, Path(ge=1)],
+    document_id: Annotated[PublicIdInput, Path()],
 ) -> TopicListResponse:
     return _scoped_topics(scope_kind="documents", scope_key=document_id)
 
@@ -268,7 +269,7 @@ def get_document_topics(
     response_model=TopicListResponse,
 )
 def post_document_topics(
-    document_id: Annotated[int, Path(ge=1)],
+    document_id: Annotated[PublicIdInput, Path()],
 ) -> TopicListResponse:
     return _post_topic_extraction(
         RetrievalScope(document_ids=(document_id,)),
@@ -280,7 +281,7 @@ def post_document_topics(
     response_model=TopicListResponse,
 )
 def get_notebook_topics(
-    notebook_id: Annotated[int, Path(ge=1)],
+    notebook_id: Annotated[PublicIdInput, Path()],
 ) -> TopicListResponse:
     return _scoped_topics(scope_kind="notebook", scope_key=notebook_id)
 
@@ -290,7 +291,7 @@ def get_notebook_topics(
     response_model=TopicListResponse,
 )
 def post_notebook_topics(
-    notebook_id: Annotated[int, Path(ge=1)],
+    notebook_id: Annotated[PublicIdInput, Path()],
 ) -> TopicListResponse:
     return _post_topic_extraction(
         RetrievalScope(notebook_id=notebook_id),

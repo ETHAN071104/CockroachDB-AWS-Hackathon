@@ -96,7 +96,7 @@ class QuizApiTest(unittest.TestCase):
         self.assertEqual(payload["scope"]["document_count"], 1)
         self.assertEqual(
             payload["scope"]["resolved_document_ids"],
-            [self.document_id],
+            [str(self.document_id)],
         )
         self.assertFalse(payload["scope"]["personalized"])
         self.assertEqual(quiz_api.pending_quiz_count(), 1)
@@ -119,7 +119,7 @@ class QuizApiTest(unittest.TestCase):
         self.assertEqual(global_response.json()["scope"]["type"], "global")
         self.assertEqual(
             global_response.json()["scope"]["resolved_document_ids"],
-            [self.document_id],
+            [str(self.document_id)],
         )
 
         empty_notebook = create_notebook("Empty quiz notebook")
@@ -198,8 +198,7 @@ class QuizApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
 
-        self.assertIsInstance(payload["attempt_id"], int)
-        self.assertGreater(payload["attempt_id"], 0)
+        self.assertRegex(payload["attempt_id"], r"^[1-9][0-9]*$")
         self.assertEqual(payload["status"], "aborted")
         self.assertEqual(payload["total_questions"], 3)
         self.assertEqual(payload["presented_questions"], 2)
@@ -217,17 +216,17 @@ class QuizApiTest(unittest.TestCase):
         self.assertTrue(second["skipped"])
         self.assertIsNone(second["selected_option"])
         source = first["sources"][0]
-        self.assertEqual(source["document_id"], self.document_id)
-        self.assertEqual(source["notebook_id"], self.notebook.id)
+        self.assertEqual(source["document_id"], str(self.document_id))
+        self.assertEqual(source["notebook_id"], str(self.notebook.id))
         self.assertEqual(source["mime_type"], "application/pdf")
         self.assertEqual(source["page_number"], 2)
         self.assertEqual(source["chunk_index"], 0)
         self.assertIn("chlorophyll", source["excerpt"].casefold())
 
-        attempt = study_database.get_quiz_attempt(payload["attempt_id"])
+        attempt = study_database.get_quiz_attempt(int(payload["attempt_id"]))
         self.assertIsNotNone(attempt)
         stored_questions = study_database.list_quiz_question_attempts(
-            payload["attempt_id"]
+            int(payload["attempt_id"])
         )
         self.assertEqual(len(stored_questions), 3)
         self.assertTrue(stored_questions[0].presented)

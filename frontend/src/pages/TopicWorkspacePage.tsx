@@ -3,7 +3,14 @@ import { useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { ApiError, apiClient } from '../api/client';
-import type { ChatResponse, StudyInteraction, StudyOutcome, Summary, Topic } from '../api/types';
+import type {
+  ChatResponse,
+  PublicId,
+  StudyInteraction,
+  StudyOutcome,
+  Summary,
+  Topic,
+} from '../api/types';
 import {
   Badge,
   Button,
@@ -55,7 +62,7 @@ export function TopicWorkspacePage() {
     ),
   );
   const rate = useAsyncAction((
-    interactionId: number,
+    interactionId: PublicId,
     nextOutcome: StudyOutcome,
     signal: AbortSignal,
   ) =>

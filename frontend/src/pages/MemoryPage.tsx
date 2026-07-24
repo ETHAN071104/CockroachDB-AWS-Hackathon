@@ -11,6 +11,7 @@ import type {
   MemoryRecord,
   MemorySearchResult,
   MemoryType,
+  PublicId,
 } from '../api/types';
 import {
   Badge,
@@ -56,7 +57,7 @@ export function MemoryPage() {
     memory: MemoryRecord;
     action: 'archive' | 'delete';
   } | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<PublicId>>(new Set());
   const [proposal, setProposal] = useState<ConsolidationProposal | null>(null);
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState<MemorySearchResult | null>(null);
@@ -67,13 +68,13 @@ export function MemoryPage() {
       apiClient.post<MemoryRecord, MemoryCreate>('/api/memories', payload, { signal }),
   );
   const updateAction = useAsyncAction(
-    (id: number, payload: MemoryDraft, signal: AbortSignal) =>
+    (id: PublicId, payload: MemoryDraft, signal: AbortSignal) =>
       apiClient.patch<MemoryRecord, MemoryDraft>(`/api/memories/${id}`, payload, { signal }),
   );
-  const archiveAction = useAsyncAction((id: number, signal: AbortSignal) =>
+  const archiveAction = useAsyncAction((id: PublicId, signal: AbortSignal) =>
     apiClient.post<MemoryRecord>(`/api/memories/${id}/archive`, undefined, { signal }),
   );
-  const deleteAction = useAsyncAction((id: number, signal: AbortSignal) =>
+  const deleteAction = useAsyncAction((id: PublicId, signal: AbortSignal) =>
     apiClient.delete<DeleteResult>(`/api/memories/${id}`, { signal }),
   );
   const searchAction = useAsyncAction((query: string, signal: AbortSignal) =>
@@ -82,8 +83,8 @@ export function MemoryPage() {
       dedupe: false,
     }),
   );
-  const proposeAction = useAsyncAction((memoryIds: number[], signal: AbortSignal) =>
-    apiClient.post<ConsolidationProposal, { memory_ids: number[] }>(
+  const proposeAction = useAsyncAction((memoryIds: PublicId[], signal: AbortSignal) =>
+    apiClient.post<ConsolidationProposal, { memory_ids: PublicId[] }>(
       '/api/memories/consolidation/propose',
       { memory_ids: memoryIds },
       { signal },

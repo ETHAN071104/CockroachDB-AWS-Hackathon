@@ -12,7 +12,7 @@ export interface ReviewQueueFilters {
   maxItems?: number;
 }
 
-const enc = (value: string | number): string => encodeURIComponent(String(value));
+const enc = (value: string): string => encodeURIComponent(value);
 
 function afterMutation<TResult>(
   request: Promise<TResult>,
@@ -48,7 +48,7 @@ function invalidateMemory(): void {
   invalidateDashboard();
 }
 
-function summaryPath(kind: T.SummaryKind, scopeId: string | number): string {
+function summaryPath(kind: T.SummaryKind, scopeId: string): string {
   return `/api/${kind === 'document' ? 'documents' : `${kind}s`}/${enc(scopeId)}/summary`;
 }
 
@@ -94,7 +94,7 @@ export const notebookApi = {
   list(q?: string, options?: GetOptions): Promise<T.NotebookList> {
     return apiClient.get(withQuery('/api/notebooks', { q }), options);
   },
-  get(id: number, options?: GetOptions): Promise<T.Notebook> {
+  get(id: T.PublicId, options?: GetOptions): Promise<T.Notebook> {
     return apiClient.get(`/api/notebooks/${enc(id)}`, options);
   },
   getUnsorted(options?: GetOptions): Promise<T.Notebook> {
@@ -107,7 +107,7 @@ export const notebookApi = {
     );
   },
   update(
-    id: number,
+    id: T.PublicId,
     payload: T.NotebookUpdate,
     options?: ApiCallOptions,
   ): Promise<T.Notebook> {
@@ -116,14 +116,14 @@ export const notebookApi = {
       invalidateLibrary,
     );
   },
-  delete(id: number, options?: ApiCallOptions): Promise<T.DeleteResult> {
+  delete(id: T.PublicId, options?: ApiCallOptions): Promise<T.DeleteResult> {
     return afterMutation(
       apiClient.delete(`/api/notebooks/${enc(id)}`, options),
       invalidateLibrary,
     );
   },
   listDocuments(
-    id: number,
+    id: T.PublicId,
     q?: string,
     options?: GetOptions,
   ): Promise<T.DocumentList> {
@@ -139,8 +139,8 @@ export const notebookApi = {
     );
   },
   addDocument(
-    notebookId: number,
-    documentId: number,
+    notebookId: T.PublicId,
+    documentId: T.PublicId,
     options?: ApiCallOptions,
   ): Promise<T.DocumentRecord> {
     return afterMutation(
@@ -153,8 +153,8 @@ export const notebookApi = {
     );
   },
   removeDocument(
-    notebookId: number,
-    documentId: number,
+    notebookId: T.PublicId,
+    documentId: T.PublicId,
     options?: ApiCallOptions,
   ): Promise<T.DocumentRecord> {
     return afterMutation(
@@ -180,12 +180,12 @@ export const documentApi = {
       options,
     );
   },
-  get(id: number, options?: GetOptions): Promise<T.DocumentRecord> {
+  get(id: T.PublicId, options?: GetOptions): Promise<T.DocumentRecord> {
     return apiClient.get(`/api/documents/${enc(id)}`, options);
   },
   upload(
     file: File,
-    notebookId?: number | null,
+    notebookId?: T.PublicId | null,
     options?: ApiCallOptions,
   ): Promise<T.DocumentUploadResult> {
     return afterMutation(
@@ -197,8 +197,8 @@ export const documentApi = {
     );
   },
   assign(
-    id: number,
-    notebookId: number | null,
+    id: T.PublicId,
+    notebookId: T.PublicId | null,
     options?: ApiCallOptions,
   ): Promise<T.DocumentRecord> {
     return afterMutation(
@@ -210,7 +210,7 @@ export const documentApi = {
       invalidateLibrary,
     );
   },
-  delete(id: number, options?: ApiCallOptions): Promise<T.DeleteResult> {
+  delete(id: T.PublicId, options?: ApiCallOptions): Promise<T.DeleteResult> {
     return afterMutation(
       apiClient.delete(`/api/documents/${enc(id)}`, options),
       invalidateLibrary,
@@ -221,14 +221,14 @@ export const documentApi = {
 export const intelligenceApi = {
   getSummary(
     kind: T.SummaryKind,
-    scopeId: string | number,
+    scopeId: string,
     options?: GetOptions,
   ): Promise<T.Summary> {
     return apiClient.get(summaryPath(kind, scopeId), options);
   },
   generateSummary(
     kind: T.SummaryKind,
-    scopeId: string | number,
+    scopeId: string,
     options?: ApiCallOptions,
   ): Promise<T.Summary> {
     return afterMutation(
@@ -242,11 +242,11 @@ export const intelligenceApi = {
   getTopic(topicId: string, options?: GetOptions): Promise<T.Topic> {
     return apiClient.get(`/api/topics/${enc(topicId)}`, options);
   },
-  listDocumentTopics(documentId: number, options?: GetOptions): Promise<T.TopicList> {
+  listDocumentTopics(documentId: T.PublicId, options?: GetOptions): Promise<T.TopicList> {
     return apiClient.get(`/api/documents/${enc(documentId)}/topics`, options);
   },
   extractDocumentTopics(
-    documentId: number,
+    documentId: T.PublicId,
     options?: ApiCallOptions,
   ): Promise<T.TopicList> {
     return afterMutation(
@@ -254,11 +254,11 @@ export const intelligenceApi = {
       () => apiClient.invalidate({ prefix: `/api/documents/${enc(documentId)}/topics` }),
     );
   },
-  listNotebookTopics(notebookId: number, options?: GetOptions): Promise<T.TopicList> {
+  listNotebookTopics(notebookId: T.PublicId, options?: GetOptions): Promise<T.TopicList> {
     return apiClient.get(`/api/notebooks/${enc(notebookId)}/topics`, options);
   },
   extractNotebookTopics(
-    notebookId: number,
+    notebookId: T.PublicId,
     options?: ApiCallOptions,
   ): Promise<T.TopicList> {
     return afterMutation(
@@ -279,7 +279,7 @@ export const chatApi = {
     return afterMutation(apiClient.post('/api/chat', payload, options), invalidateStudy);
   },
   updateOutcome(
-    interactionId: number,
+    interactionId: T.PublicId,
     outcome: T.StudyOutcome,
     options?: ApiCallOptions,
   ): Promise<T.StudyInteraction> {
@@ -298,7 +298,7 @@ export const sessionApi = {
   list(options?: GetOptions): Promise<T.StudySessionList> {
     return apiClient.get('/api/study/sessions', options);
   },
-  get(id: number, options?: GetOptions): Promise<T.SessionDetail> {
+  get(id: T.PublicId, options?: GetOptions): Promise<T.SessionDetail> {
     return apiClient.get(`/api/study/sessions/${enc(id)}`, options);
   },
   endActive(options?: ApiCallOptions): Promise<T.StudySession> {
@@ -316,7 +316,7 @@ export const memoryApi = {
       options,
     );
   },
-  get(id: number, options?: GetOptions): Promise<T.MemoryRecord> {
+  get(id: T.PublicId, options?: GetOptions): Promise<T.MemoryRecord> {
     return apiClient.get(`/api/memories/${enc(id)}`, options);
   },
   search(q: string, limit = 5, options?: GetOptions): Promise<T.MemorySearchResult> {
@@ -326,7 +326,7 @@ export const memoryApi = {
     return afterMutation(apiClient.post('/api/memories', payload, options), invalidateMemory);
   },
   update(
-    id: number,
+    id: T.PublicId,
     payload: T.MemoryUpdate,
     options?: ApiCallOptions,
   ): Promise<T.MemoryRecord> {
@@ -335,13 +335,13 @@ export const memoryApi = {
       invalidateMemory,
     );
   },
-  archive(id: number, options?: ApiCallOptions): Promise<T.MemoryRecord> {
+  archive(id: T.PublicId, options?: ApiCallOptions): Promise<T.MemoryRecord> {
     return afterMutation(
       apiClient.post(`/api/memories/${enc(id)}/archive`, undefined, options),
       invalidateMemory,
     );
   },
-  delete(id: number, options?: ApiCallOptions): Promise<T.DeleteResult> {
+  delete(id: T.PublicId, options?: ApiCallOptions): Promise<T.DeleteResult> {
     return afterMutation(
       apiClient.delete(`/api/memories/${enc(id)}`, options),
       invalidateMemory,
@@ -362,7 +362,7 @@ export const memoryApi = {
     );
   },
   proposeConsolidation(
-    memoryIds: number[],
+    memoryIds: T.PublicId[],
     options?: ApiCallOptions,
   ): Promise<T.ConsolidationProposal> {
     return apiClient.post(
@@ -416,10 +416,10 @@ export const reportApi = {
       options,
     );
   },
-  getSession(id: number, options?: GetOptions): Promise<T.SessionReport> {
+  getSession(id: T.PublicId, options?: GetOptions): Promise<T.SessionReport> {
     return apiClient.get(`/api/reports/study/sessions/${enc(id)}`, options);
   },
-  summarizeSession(id: number, options?: ApiCallOptions): Promise<T.SessionSummary> {
+  summarizeSession(id: T.PublicId, options?: ApiCallOptions): Promise<T.SessionSummary> {
     return apiClient.post(
       `/api/reports/study/sessions/${enc(id)}/summary`,
       undefined,
@@ -441,7 +441,7 @@ export const reportApi = {
       options,
     );
   },
-  getQuizAttempt(id: number, options?: GetOptions): Promise<T.QuizAttemptReport> {
+  getQuizAttempt(id: T.PublicId, options?: GetOptions): Promise<T.QuizAttemptReport> {
     return apiClient.get(`/api/reports/quizzes/${enc(id)}`, options);
   },
 };
@@ -460,7 +460,7 @@ export const studyActionApi = {
     );
   },
   generateReview(
-    interactionId: number,
+    interactionId: T.PublicId,
     scope?: T.RetrievalScope | null,
     options?: ApiCallOptions,
   ): Promise<T.ReviewAction> {

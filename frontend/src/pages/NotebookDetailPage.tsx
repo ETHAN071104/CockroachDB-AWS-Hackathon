@@ -16,9 +16,11 @@ import {
   ApiError,
   api,
   getErrorMessage,
+  isPublicId,
   type DocumentRecord,
   type NotebookFilter,
   type NotebookUpdate,
+  type PublicId,
   type Summary,
 } from "../api";
 import {
@@ -40,13 +42,13 @@ import {
 import { useApiQuery, useAsyncAction } from "../hooks";
 
 interface UpdateNotebookArgs {
-  id: number;
+  id: PublicId;
   payload: NotebookUpdate;
 }
 
 interface MoveDocumentArgs {
-  documentId: number;
-  notebookId: number | null;
+  documentId: PublicId;
+  notebookId: PublicId | null;
 }
 
 function formatDate(value: string | null) {
@@ -130,10 +132,9 @@ export function NotebookDetailPage() {
   const { notebookId = "" } = useParams<{ notebookId: string }>();
   const navigate = useNavigate();
   const isUnsorted = notebookId === "unsorted";
-  const numericId = Number(notebookId);
-  const isValidNamedId = Number.isInteger(numericId) && numericId > 0;
+  const isValidNamedId = isPublicId(notebookId);
   const validRoute = isUnsorted || isValidNamedId;
-  const notebookFilter: NotebookFilter = isUnsorted ? "unsorted" : numericId;
+  const notebookFilter: NotebookFilter = isUnsorted ? "unsorted" : notebookId;
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -143,14 +144,14 @@ export function NotebookDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
-  const [moveDrafts, setMoveDrafts] = useState<Record<number, string>>({});
+  const [moveDrafts, setMoveDrafts] = useState<Record<PublicId, string>>({});
 
   const notebook = useApiQuery(
     ["notebook", notebookId],
     (signal) =>
       isUnsorted
         ? api.getUnsortedNotebook({ signal })
-        : api.getNotebook(numericId, { signal }),
+        : api.getNotebook(notebookId, { signal }),
     { enabled: validRoute },
   );
   const documents = useApiQuery(
@@ -166,8 +167,8 @@ export function NotebookDetailPage() {
     api.listNotebooks(undefined, { signal }),
   );
   const summary = useApiQuery(
-    ["summary", "notebook", numericId],
-    (signal) => api.getCachedSummary("notebook", numericId, { signal }),
+    ["summary", "notebook", notebookId],
+    (signal) => api.getCachedSummary("notebook", notebookId, { signal }),
     { enabled: isValidNamedId },
   );
 
@@ -175,17 +176,17 @@ export function NotebookDetailPage() {
     ({ id, payload }: UpdateNotebookArgs, signal: AbortSignal) =>
       api.updateNotebook(id, payload, { signal }),
   );
-  const deleteAction = useAsyncAction((id: number, signal: AbortSignal) =>
+  const deleteAction = useAsyncAction((id: PublicId, signal: AbortSignal) =>
     api.deleteNotebook(id, { signal }),
   );
   const uploadAction = useAsyncAction((selectedFile: File, signal: AbortSignal) =>
-    api.uploadDocument(selectedFile, isUnsorted ? null : numericId, { signal }),
+    api.uploadDocument(selectedFile, isUnsorted ? null : notebookId, { signal }),
   );
   const moveAction = useAsyncAction(
     ({ documentId, notebookId: destinationId }: MoveDocumentArgs, signal: AbortSignal) =>
       api.assignDocument(documentId, destinationId, { signal }),
   );
-  const generateSummary = useAsyncAction((id: number, signal: AbortSignal) =>
+  const generateSummary = useAsyncAction((id: PublicId, signal: AbortSignal) =>
     api.generateSummary("notebook", id, { signal }),
   );
 
@@ -200,7 +201,7 @@ export function NotebookDetailPage() {
     if (!isValidNamedId || !editName.trim()) return;
     try {
       const result = await updateAction.run({
-        id: numericId,
+        id: notebookId,
         payload: {
           name: editName.trim(),
           description: editDescription.trim(),
@@ -218,7 +219,7 @@ export function NotebookDetailPage() {
   async function handleDelete() {
     if (!isValidNamedId) return;
     try {
-      const result = await deleteAction.run(numericId);
+      const result = await deleteAction.run(notebookId);
       if (!result) return;
       navigate("/notebooks", { replace: true });
     } catch {
@@ -243,7 +244,7 @@ export function NotebookDetailPage() {
   async function handleMove(document: DocumentRecord) {
     const destination = moveDrafts[document.id];
     if (destination === undefined) return;
-    const destinationId = destination === "unsorted" ? null : Number(destination);
+    const destinationId = destination === "unsorted" ? null : destination;
     try {
       const result = await moveAction.run({
         documentId: document.id,
@@ -264,7 +265,7 @@ export function NotebookDetailPage() {
   async function handleGenerateSummary() {
     if (!isValidNamedId) return;
     try {
-      const result = await generateSummary.run(numericId);
+      const result = await generateSummary.run(notebookId);
       if (result) summary.setData(result);
     } catch {
       // Previous cached summary stays rendered by design.
@@ -275,7 +276,7 @@ export function NotebookDetailPage() {
     return (
       <ErrorState
         title="Invalid notebook"
-        message="Notebook IDs must be positive numbers, or use the Unsorted Documents view."
+        message="Notebook IDs must contain positive decimal digits, or use the Unsorted Documents view."
       />
     );
   }

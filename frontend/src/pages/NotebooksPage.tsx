@@ -18,6 +18,7 @@ import {
   type Notebook,
   type NotebookCreate,
   type NotebookUpdate,
+  type PublicId,
 } from "../api";
 import {
   Badge,
@@ -35,26 +36,26 @@ import {
 import { useApiQuery, useAsyncAction } from "../hooks";
 
 interface UpdateNotebookArgs {
-  id: number;
+  id: PublicId;
   payload: NotebookUpdate;
 }
 
 interface UploadDocumentArgs {
   file: File;
-  notebookId: number | null;
+  notebookId: PublicId | null;
 }
 
 interface AssignDocumentArgs {
-  documentId: number;
-  notebookId: number | null;
+  documentId: PublicId;
+  notebookId: PublicId | null;
 }
 
-function notebookValue(notebookId: number | null) {
+function notebookValue(notebookId: PublicId | null) {
   return notebookId == null ? "unsorted" : String(notebookId);
 }
 
 function parseNotebookValue(value: string) {
-  return value === "unsorted" ? null : Number(value);
+  return value === "unsorted" ? null : value;
 }
 
 export function NotebooksPage() {
@@ -73,7 +74,7 @@ export function NotebooksPage() {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [uploadNotebookId, setUploadNotebookId] = useState<string>("unsorted");
   const [assignmentDrafts, setAssignmentDrafts] = useState<
-    Record<number, string>
+    Record<PublicId, string>
   >({});
 
   const notebooks = useApiQuery(["notebooks", search], (signal) =>
@@ -94,7 +95,7 @@ export function NotebooksPage() {
     ({ id, payload }: UpdateNotebookArgs, signal: AbortSignal) =>
       api.updateNotebook(id, payload, { signal }),
   );
-  const deleteAction = useAsyncAction((id: number, signal: AbortSignal) =>
+  const deleteAction = useAsyncAction((id: PublicId, signal: AbortSignal) =>
     api.deleteNotebook(id, { signal }),
   );
   const uploadAction = useAsyncAction(

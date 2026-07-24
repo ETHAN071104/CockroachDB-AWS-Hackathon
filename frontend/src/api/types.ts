@@ -1,4 +1,5 @@
 export type JsonPrimitive = string | number | boolean | null;
+export type PublicId = string;
 
 export interface ApiErrorBody {
   code: string;
@@ -43,7 +44,7 @@ export interface NotebookUpdate {
 }
 
 export interface Notebook {
-  id: number | null;
+  id: PublicId | null;
   name: string;
   description: string;
   document_count: number;
@@ -59,13 +60,13 @@ export interface NotebookList {
 }
 
 export interface DocumentRecord {
-  id: number;
+  id: PublicId;
   filename: string;
   mime_type: string;
   chunk_count: number;
   created_at: string;
   updated_at: string;
-  notebook_id: number | null;
+  notebook_id: PublicId | null;
 }
 
 export interface DocumentList {
@@ -74,7 +75,7 @@ export interface DocumentList {
 }
 
 export interface DocumentAssignment {
-  notebook_id: number | null;
+  notebook_id: PublicId | null;
 }
 
 export interface DocumentUploadResult {
@@ -88,14 +89,14 @@ export interface DeleteResult {
 }
 
 export type RetrievalScope =
-  | { notebook_id: number; document_ids?: never; topic_id?: never }
-  | { notebook_id?: never; document_ids: number[]; topic_id?: never }
+  | { notebook_id: PublicId; document_ids?: never; topic_id?: never }
+  | { notebook_id?: never; document_ids: PublicId[]; topic_id?: never }
   | { notebook_id?: never; document_ids?: never; topic_id: string };
 
 export interface SourceLineage {
   index: number;
-  document_id: number | null;
-  notebook_id: number | null;
+  document_id: PublicId | null;
+  notebook_id: PublicId | null;
   filename: string;
   mime_type: string | null;
   page_number: number | null;
@@ -162,7 +163,7 @@ export interface MemoryProposal {
   importance: number;
   conflict_type: 'new' | 'refinement' | 'contradiction';
   conflict_confidence: number;
-  existing_memory_id: number | null;
+  existing_memory_id: PublicId | null;
   existing_memory_content: string | null;
   allowed_decisions: MemoryDecision[];
   reason: string;
@@ -239,8 +240,8 @@ export interface GuestSessionInspectResponse {
 }
 
 export interface ChatResponse {
-  session_id: number;
-  interaction_id: number;
+  session_id: PublicId;
+  interaction_id: PublicId;
   answer: string;
   sources: SourceLineage[];
   memory_proposal: MemoryProposal | null;
@@ -252,7 +253,7 @@ export interface ChatResponse {
 }
 
 export interface StudySession {
-  id: number;
+  id: PublicId;
   status: 'active' | 'completed';
   started_at: string;
   ended_at: string | null;
@@ -264,8 +265,8 @@ export interface StudySessionList {
 }
 
 export interface StudyInteraction {
-  id: number;
-  session_id: number;
+  id: PublicId;
+  session_id: PublicId;
   question: string;
   answer: string;
   outcome: StudyOutcome;
@@ -293,7 +294,7 @@ export interface MemoryUpdate {
 }
 
 export interface MemoryRecord {
-  id: number;
+  id: PublicId;
   memory_type: MemoryType;
   content: string;
   confidence: number;
@@ -319,7 +320,7 @@ export interface MemoryList {
 }
 
 export interface MemorySearchItem {
-  memory_id: number;
+  memory_id: PublicId;
   memory_type: MemoryType;
   content: string;
   confidence: number;
@@ -334,7 +335,7 @@ export interface MemorySearchResult {
 
 export interface MemoryProposalDecisionRequest {
   decision: MemoryDecision;
-  replace_memory_id?: number | null;
+  replace_memory_id?: PublicId | null;
   edited_content?: string | null;
 }
 
@@ -380,7 +381,7 @@ export interface AdaptationInfo {
   targeted_topic: string | null;
   difficulty: string | null;
   reason: string;
-  memory_ids: number[];
+  memory_ids: PublicId[];
   learning_signal_ids: string[];
   applied_changes: Record<string, unknown>;
   event_id: string | null;
@@ -401,7 +402,7 @@ export interface LearningSignal {
   status: string;
   first_observed_at: string;
   last_observed_at: string;
-  memory_id: number | null;
+  memory_id: PublicId | null;
   proposal_id: string | null;
 }
 
@@ -445,7 +446,7 @@ export interface QuizScopeInfo {
   label: string;
   document_count: number;
   personalized: boolean;
-  resolved_document_ids: number[];
+  resolved_document_ids: PublicId[];
   description: string;
   notebook_name?: string | null;
   document_name?: string | null;
@@ -468,7 +469,7 @@ export interface QuizQuestionFeedback {
 }
 
 export interface QuizSubmission {
-  attempt_id: number;
+  attempt_id: PublicId;
   status: 'completed' | 'aborted';
   total_questions: number;
   presented_questions: number;
@@ -492,8 +493,8 @@ export interface OutcomeCounts {
 }
 
 export interface InteractionReport {
-  id: number;
-  session_id: number;
+  id: PublicId;
+  session_id: PublicId;
   question: string;
   answer: string;
   outcome: StudyOutcome;
@@ -502,7 +503,7 @@ export interface InteractionReport {
 }
 
 export interface SessionReport {
-  id: number;
+  id: PublicId;
   status: 'active' | 'completed';
   started_at: string;
   ended_at: string | null;
@@ -524,7 +525,7 @@ export interface SessionSummary {
 }
 
 export interface ProgressSession {
-  session_id: number;
+  session_id: PublicId;
   started_at: string;
   ended_at: string;
   interaction_count: number;
@@ -542,7 +543,7 @@ export interface ProgressReport {
 }
 
 export interface StoredQuizAttempt {
-  id: number;
+  id: PublicId;
   requested_topic: string;
   quiz_topic: string;
   status: 'completed' | 'aborted';
@@ -564,7 +565,7 @@ export type StoredQuizQuestionStatus =
   | 'incorrect';
 
 export interface StoredQuizQuestion {
-  id: number;
+  id: PublicId;
   question_number: number;
   question: string;
   options: string[];
@@ -609,17 +610,17 @@ export interface QuizPerformance {
 }
 
 export interface ReviewRecommendation {
-  interaction_id: number;
-  session_id: number;
+  interaction_id: PublicId;
+  session_id: PublicId;
   question: string;
   outcome: 'partial' | 'confused';
   priority_score: number;
   unresolved_count: number;
   source_filenames: string[];
-  source_document_ids: number[];
+  source_document_ids: PublicId[];
   created_at: string;
   reason: string;
-  memory_ids?: number[];
+  memory_ids?: PublicId[];
   learning_signal_ids?: string[];
   adaptation_reason?: string | null;
 }
@@ -659,7 +660,7 @@ export interface StudyPlanRequest {
 export interface StudyPlanEvidence {
   evidence_type: 'study_outcome' | 'quiz_result';
   status: string;
-  reference_id: number;
+  reference_id: PublicId;
   detail: string;
 }
 
@@ -671,7 +672,7 @@ export interface StudyPlanItem {
   estimated_minutes: number;
   evidence: StudyPlanEvidence[];
   source_filenames: string[];
-  source_document_ids: number[];
+  source_document_ids: PublicId[];
 }
 
 export interface StudyPlan {
@@ -716,7 +717,7 @@ export interface IntegrityIssue {
   code: string;
   message: string;
   record_type: string;
-  record_id: number | string | null;
+  record_id: string | null;
 }
 
 export interface IntegrityReport {
@@ -745,7 +746,7 @@ export interface DashboardSession extends StudySession {
 }
 
 export interface DashboardQuizAttempt {
-  id: number;
+  id: PublicId;
   quiz_topic: string;
   status: 'completed' | 'aborted';
   score_percentage: number;
@@ -771,7 +772,7 @@ export interface Dashboard {
 }
 
 export type SummaryKind = 'document' | 'notebook' | 'topic';
-export type NotebookFilter = number | 'unsorted';
+export type NotebookFilter = PublicId | 'unsorted';
 
 export interface TopicExtractionRequest {
   scope: RetrievalScope;
@@ -786,7 +787,7 @@ export interface InteractionOutcomeUpdate {
 }
 
 export interface ConsolidationProposeRequest {
-  memory_ids: number[];
+  memory_ids: PublicId[];
 }
 
 export interface ConsolidationApplyRequest {
@@ -794,7 +795,7 @@ export interface ConsolidationApplyRequest {
 }
 
 export interface ReviewGenerateRequest {
-  interaction_id: number;
+  interaction_id: PublicId;
   scope?: RetrievalScope | null;
 }
 

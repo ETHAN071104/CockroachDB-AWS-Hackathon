@@ -915,8 +915,8 @@ class IntelligenceApiTest(unittest.TestCase):
         )
         self.assertTrue(payload["sources"])
         source = payload["sources"][0]
-        self.assertEqual(source["document_id"], self.document_id)
-        self.assertEqual(source["notebook_id"], self.notebook.id)
+        self.assertEqual(source["document_id"], str(self.document_id))
+        self.assertEqual(source["notebook_id"], str(self.notebook.id))
         self.assertEqual(source["mime_type"], "application/pdf")
         self.assertEqual(source["page_number"], 2)
         self.assertIsNone(source["slide_number"])
@@ -1005,7 +1005,7 @@ class IntelligenceApiTest(unittest.TestCase):
                 (source["document_id"], source["chunk_index"])
                 for source in topic["sources"]
             ],
-            [(self.document_id, 0)],
+            [(str(self.document_id), 0)],
         )
 
         model_calls_after_generation = len(self.model.calls)

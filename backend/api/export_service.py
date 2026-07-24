@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.api.health import API_VERSION
+from backend.api.public_ids import serialize_public_ids_in_data
 from backend.rag import config as rag_config
 
 
@@ -208,7 +209,7 @@ def _build_cockroach_export(
                     ).mappings().all()
                 tables[table_name] = [
                     {
-                        key: _logical_export_value(value)
+                        key: _logical_export_value(value, key=key)
                         for key, value in row.items()
                         if key != "workspace_id"
                     }
@@ -233,13 +234,17 @@ def _build_cockroach_export(
         raise ExportCreationError("Study data export could not be created.") from error
 
 
-def _logical_export_value(value: object) -> object:
+def _logical_export_value(
+    value: object,
+    *,
+    key: str | None = None,
+) -> object:
     if isinstance(value, bytes):
         return {"encoding": "base64", "data": base64.b64encode(value).decode("ascii")}
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
     if isinstance(value, (dict, list)):
-        return value
+        return serialize_public_ids_in_data(value, key=key)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return serialize_public_ids_in_data(value, key=key)
     return str(value)
 
 

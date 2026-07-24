@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from backend.api.public_ids import PublicId
 from backend.api.schemas import ApiModel
 
 
@@ -28,7 +29,7 @@ class DashboardOutcomeCountsResponse(ApiModel):
 
 
 class DashboardSessionResponse(ApiModel):
-    id: int
+    id: PublicId
     status: Literal["active", "completed"]
     started_at: str
     ended_at: str | None
@@ -36,7 +37,7 @@ class DashboardSessionResponse(ApiModel):
 
 
 class DashboardQuizAttemptResponse(ApiModel):
-    id: int
+    id: PublicId
     quiz_topic: str
     status: Literal["completed", "aborted"]
     score_percentage: float = Field(ge=0, le=100)

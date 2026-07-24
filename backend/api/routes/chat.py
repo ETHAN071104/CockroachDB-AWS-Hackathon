@@ -6,6 +6,7 @@ from fastapi import APIRouter, Path
 
 import backend.rag.chat_service as chat_service
 from backend.api.errors import ApiError, map_exception
+from backend.api.public_ids import PublicIdInput
 from backend.application.dependencies import get_application_dependencies
 from backend.api.routes.memory import memory_proposal_response
 from backend.api.schemas import (
@@ -181,7 +182,7 @@ def chat(payload: ChatRequest) -> ChatResponse:
     response_model=StudyInteractionResponse,
 )
 def update_interaction_outcome(
-    interaction_id: Annotated[int, Path(ge=1)],
+    interaction_id: Annotated[PublicIdInput, Path()],
     payload: InteractionOutcomeUpdate,
 ) -> StudyInteractionResponse:
     repository = get_application_dependencies().study_sessions
@@ -225,7 +226,7 @@ def list_study_sessions() -> StudySessionListResponse:
     response_model=SessionDetailResponse,
 )
 def get_study_session(
-    session_id: Annotated[int, Path(ge=1)],
+    session_id: Annotated[PublicIdInput, Path()],
 ) -> SessionDetailResponse:
     session = _session_or_404(session_id)
     repository = get_application_dependencies().study_sessions

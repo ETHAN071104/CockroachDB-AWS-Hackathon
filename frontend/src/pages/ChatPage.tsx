@@ -15,9 +15,11 @@ import {
 import {
   api,
   getErrorMessage,
+  isPublicId,
   type ChatRequest,
   type ChatResponse,
   type MemoryDecision,
+  type PublicId,
   type StudyOutcome,
 } from "../api";
 import {
@@ -43,7 +45,7 @@ interface ChatExchange {
 }
 
 interface OutcomeActionArgs {
-  interactionId: number;
+  interactionId: PublicId;
   outcome: StudyOutcome;
 }
 
@@ -79,12 +81,11 @@ function buildChatRequest(
   if (!scopeValue) return null;
   if (scopeKind === "topic") return { ...payload, topic_id: scopeValue };
 
-  const numericId = Number(scopeValue);
-  if (!Number.isInteger(numericId) || numericId <= 0) return null;
+  if (!isPublicId(scopeValue)) return null;
   if (scopeKind === "notebook") {
-    return { ...payload, notebook_id: numericId };
+    return { ...payload, notebook_id: scopeValue };
   }
-  return { ...payload, document_ids: [numericId] };
+  return { ...payload, document_ids: [scopeValue] };
 }
 
 export function ChatPage() {
@@ -92,13 +93,13 @@ export function ChatPage() {
   const [scopeKind, setScopeKind] = useState<ScopeKind>("global");
   const [scopeValue, setScopeValue] = useState("");
   const [exchanges, setExchanges] = useState<ChatExchange[]>([]);
-  const [outcomes, setOutcomes] = useState<Record<number, StudyOutcome>>({});
+  const [outcomes, setOutcomes] = useState<Record<PublicId, StudyOutcome>>({});
   const [proposalDecisions, setProposalDecisions] = useState<
     Record<string, MemoryDecision>
   >({});
   const [formError, setFormError] = useState<string | null>(null);
   const [endDialogOpen, setEndDialogOpen] = useState(false);
-  const [endedSessionId, setEndedSessionId] = useState<number | null>(null);
+  const [endedSessionId, setEndedSessionId] = useState<PublicId | null>(null);
 
   const notebooks = useApiQuery(["chat-scopes", "notebooks"], (signal) =>
     api.listNotebooks(undefined, { signal }),
@@ -141,13 +142,13 @@ export function ChatPage() {
     if (!scopeValue) return "Choose a source";
     if (scopeKind === "notebook") {
       return (
-        notebooks.data?.items.find((item) => String(item.id) === scopeValue)?.name ??
+        notebooks.data?.items.find((item) => item.id === scopeValue)?.name ??
         `Notebook ${scopeValue}`
       );
     }
     if (scopeKind === "document") {
       return (
-        documents.data?.items.find((item) => String(item.id) === scopeValue)
+        documents.data?.items.find((item) => item.id === scopeValue)
           ?.filename ?? `Document ${scopeValue}`
       );
     }
@@ -191,7 +192,7 @@ export function ChatPage() {
     }
   }
 
-  async function handleOutcome(interactionId: number, outcome: StudyOutcome) {
+  async function handleOutcome(interactionId: PublicId, outcome: StudyOutcome) {
     try {
       await updateOutcome.run({ interactionId, outcome });
       setOutcomes((current) => ({ ...current, [interactionId]: outcome }));

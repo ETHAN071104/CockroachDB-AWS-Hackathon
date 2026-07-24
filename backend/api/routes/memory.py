@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query
 
 from backend.api.errors import ApiError
+from backend.api.public_ids import PublicIdInput
 from backend.application.dependencies import get_application_dependencies
 from backend.api.schemas import (
     ConsolidationApplyRequest,
@@ -377,7 +378,7 @@ def apply_consolidation_alias_route(
     response_model=MemoryResponse,
 )
 def get_memory_route(
-    memory_id: Annotated[int, Path(ge=1)],
+    memory_id: Annotated[PublicIdInput, Path()],
 ) -> MemoryResponse:
     return memory_response(
         _memory_or_404(memory_id)
@@ -389,7 +390,7 @@ def get_memory_route(
     response_model=MemoryResponse,
 )
 def update_memory_route(
-    memory_id: Annotated[int, Path(ge=1)],
+    memory_id: Annotated[PublicIdInput, Path()],
     payload: MemoryUpdate,
 ) -> MemoryResponse:
     existing = _memory_or_404(memory_id)
@@ -433,7 +434,7 @@ def update_memory_route(
     response_model=MemoryResponse,
 )
 def archive_memory_route(
-    memory_id: Annotated[int, Path(ge=1)],
+    memory_id: Annotated[PublicIdInput, Path()],
 ) -> MemoryResponse:
     _memory_or_404(memory_id)
     archived = archive_memory(memory_id)
@@ -455,7 +456,7 @@ def archive_memory_route(
     response_model=DeleteResponse,
 )
 def delete_memory_route(
-    memory_id: Annotated[int, Path(ge=1)],
+    memory_id: Annotated[PublicIdInput, Path()],
 ) -> DeleteResponse:
     _memory_or_404(memory_id)
 

@@ -236,6 +236,20 @@ ERROR_CATALOG: dict[str, ErrorDefinition] = {
         "Correct the highlighted values and submit again.",
         False,
     ),
+    "INVALID_PUBLIC_ID": ErrorDefinition(
+        422,
+        "Invalid public ID",
+        "The supplied public ID is not a positive decimal string.",
+        "Send the complete ID using decimal digits only.",
+        False,
+    ),
+    "PUBLIC_ID_STRING_REQUIRED": ErrorDefinition(
+        422,
+        "This ID must be sent as text",
+        "Large public IDs cannot be represented safely as JavaScript numbers.",
+        "Send the complete decimal ID as a string.",
+        False,
+    ),
     "REQUEST_CONFLICT": ErrorDefinition(
         409,
         "The request conflicts with current data",

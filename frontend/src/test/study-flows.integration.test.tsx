@@ -114,7 +114,7 @@ describe("recoverable study workflows", () => {
           url.endsWith("/api/study/actions/quizzes/quiz-secret-1/submit")
         ) {
           return jsonResponse({
-            attempt_id: 77,
+            attempt_id: "77",
             status: "completed",
             total_questions: 1,
             presented_questions: 1,
@@ -135,7 +135,7 @@ describe("recoverable study workflows", () => {
                 sources: [
                   {
                     index: 1,
-                    document_id: 9,
+                    document_id: "9",
                     notebook_id: null,
                     filename: "plants.pdf",
                     mime_type: "application/pdf",

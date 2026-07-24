@@ -5,6 +5,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Path, Query
 
 from backend.api.errors import ApiError, map_exception
+from backend.api.public_ids import PublicIdInput
 from backend.api.report_schemas import (
     CoachingActivityResponse,
     CoachingPlanResponse,
@@ -301,7 +302,7 @@ def get_session_reports(
     include_in_schema=False,
 )
 def get_session_report(
-    session_id: Annotated[int, Path(ge=1)],
+    session_id: Annotated[PublicIdInput, Path()],
 ) -> SessionReportResponse:
     try:
         return _session_report(build_session_report(session_id))
@@ -323,7 +324,7 @@ def get_session_report(
     include_in_schema=False,
 )
 def post_session_summary(
-    session_id: Annotated[int, Path(ge=1)],
+    session_id: Annotated[PublicIdInput, Path()],
 ) -> SessionSummaryResponse:
     try:
         result = generate_session_summary(session_id)
@@ -426,7 +427,7 @@ def get_quiz_performance(
     response_model=QuizAttemptReportResponse,
 )
 def get_quiz_attempt_report(
-    attempt_id: Annotated[int, Path(ge=1)],
+    attempt_id: Annotated[PublicIdInput, Path()],
 ) -> QuizAttemptReportResponse:
     try:
         return _quiz_attempt_report(build_quiz_attempt_report(attempt_id))
@@ -450,8 +451,8 @@ def get_quiz_attempt_report(
 def get_review_queue(
     session_limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     max_items: Annotated[int, Query(ge=1, le=100)] = 10,
-    notebook_id: Annotated[int | None, Query(ge=1)] = None,
-    document_ids: Annotated[list[int] | None, Query()] = None,
+    notebook_id: Annotated[PublicIdInput | None, Query()] = None,
+    document_ids: Annotated[list[PublicIdInput] | None, Query()] = None,
     topic_id: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
 ) -> ReviewQueueResponse:
     selected = sum(
@@ -703,7 +704,11 @@ def get_integrity() -> IntegrityResponse:
                 code=issue.code,
                 message=issue.message,
                 record_type=issue.record_type,
-                record_id=issue.record_id,
+                record_id=(
+                    str(issue.record_id)
+                    if issue.record_id is not None
+                    else None
+                ),
             )
             for issue in report.issues
         ],

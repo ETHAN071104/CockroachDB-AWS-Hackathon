@@ -1,9 +1,11 @@
 import { FileText, Presentation, Quote } from "lucide-react";
 
+import type { PublicId } from "../api";
+
 export interface SourceLineage {
   index?: number;
-  document_id?: number | null;
-  notebook_id?: number | null;
+  document_id?: PublicId | null;
+  notebook_id?: PublicId | null;
   filename: string;
   mime_type?: string | null;
   page_number?: number | null;

@@ -118,9 +118,12 @@ class ReportQuizAuditTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["interactions"][0]["id"], interaction.id)
+        self.assertEqual(
+            payload["interactions"][0]["id"],
+            str(interaction.id),
+        )
         source = payload["interactions"][0]["sources"][0]
-        self.assertEqual(source["document_id"], self.document_id)
+        self.assertEqual(source["document_id"], str(self.document_id))
         self.assertIsNone(source["notebook_id"])
 
     def test_review_queue_get_applies_and_validates_flat_scope(self) -> None:
@@ -152,7 +155,10 @@ class ReportQuizAuditTest(unittest.TestCase):
             params=[("document_ids", str(self.document_id))],
         )
         self.assertEqual(scoped.status_code, 200, scoped.text)
-        self.assertEqual(scoped.json()["items"][0]["interaction_id"], interaction.id)
+        self.assertEqual(
+            scoped.json()["items"][0]["interaction_id"],
+            str(interaction.id),
+        )
 
         missing = self.client.get(
             "/api/study/actions/review-queue",
